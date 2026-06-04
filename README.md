@@ -28,7 +28,7 @@ The same translation applies to `gtefield`/`eqfield`/etc. cross-field references
 go get github.com/uded/koanf-validate
 ```
 
-Requires Go 1.23+. The only direct dependency is `github.com/go-playground/validator/v10`.
+Requires Go 1.25+ (matches the MSRV of `validator/v10`). The only direct dependency is `github.com/go-playground/validator/v10`.
 
 ## Usage
 
