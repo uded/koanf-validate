@@ -179,9 +179,15 @@ type walker struct {
 func (w *walker) walkType(t reflect.Type, goPath, koanfPath string, parentSteps []fieldStep, siblingSegments map[string]int) error {
 	// Cycle guard. Two values of the same Go type share an identical
 	// reflect.Type, so this catches both self-reference (Node.Next *Node)
-	// and mutual recursion (A→B→A).
+	// and mutual recursion (A→B→A). The koanf path (or "<root>" when the
+	// root struct itself triggers it) is included so operators can locate
+	// the offending field in their config schema.
 	if _, on := w.visiting[t]; on {
-		return fmt.Errorf("%w: %s", ErrCyclicType, t.String())
+		where := koanfPath
+		if where == "" {
+			where = "<root>"
+		}
+		return fmt.Errorf("%w: %s at koanf path %q", ErrCyclicType, t.String(), where)
 	}
 	w.visiting[t] = struct{}{}
 	defer delete(w.visiting, t)
