@@ -237,6 +237,26 @@ func TestStruct_NormalPath_DoesNotHaveErrPathUnresolved(t *testing.T) {
 	}
 }
 
+// Options.Delim threads through walker path joining, validator-error
+// translation, and Validate()-error rebasing. Using "/" produces koanf
+// paths like "server/port" everywhere — including when a Validate()
+// method emits an already-absolute path.
+type slashDelimCfg struct {
+	Server struct {
+		Port int `koanf:"port" koanf-validate:"required,min=1"`
+	} `koanf:"server"`
+}
+
+func TestStruct_CustomDelim_RoutesThroughEverything(t *testing.T) {
+	t.Parallel()
+	cfg := &slashDelimCfg{}
+	err := koanfvalidate.Struct(cfg, koanfvalidate.Options{Delim: "/"})
+	me := requireMultiError(t, err)
+	if fe := findByPath(me, "server/port"); fe == nil {
+		t.Fatalf("expected path 'server/port', got %v", pathsOf(me))
+	}
+}
+
 // A nil *struct field whose type implements Validate() must NOT have
 // Validate() called on a synthetic zero value. The library walks the schema
 // at type-level for path mapping, but skips visitor execution when the

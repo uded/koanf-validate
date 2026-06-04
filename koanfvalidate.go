@@ -107,6 +107,12 @@ type Options struct {
 	// with IncludeValues=true at a debug log level is a reasonable pattern
 	// when the redacted message is insufficient.
 	IncludeValues bool
+
+	// Delim is the path separator joining koanf path segments and used to
+	// detect already-absolute paths returned by Validate() methods. Empty
+	// → "." (matches koanf's own default). Set this to whatever separator
+	// you passed to koanf.New.
+	Delim string
 }
 
 // StructValidator is the auto-discovery interface for type-anchored
@@ -146,6 +152,9 @@ func Struct(cfg any, opts Options) error {
 	if opts.ValidateTag == "" {
 		opts.ValidateTag = defaultValidateTag
 	}
+	if opts.Delim == "" {
+		opts.Delim = defaultDelim
+	}
 
 	// Resolve the input first so that bad inputs are rejected before any
 	// reflection, cache lookup, or validator work. Holds the receiver for
@@ -155,7 +164,7 @@ func Struct(cfg any, opts Options) error {
 		return err
 	}
 
-	wr, err := walkStruct(cfg, opts.PathTag, defaultDelim)
+	wr, err := walkStruct(cfg, opts.PathTag, opts.Delim)
 	if err != nil {
 		return err
 	}
@@ -194,7 +203,7 @@ func Struct(cfg any, opts Options) error {
 		if userErr == nil {
 			continue
 		}
-		fieldErrors = append(fieldErrors, flattenValidateError(userErr, recipe.koanfPath)...)
+		fieldErrors = append(fieldErrors, flattenValidateError(userErr, recipe.koanfPath, opts.Delim)...)
 	}
 
 	if len(fieldErrors) == 0 {
@@ -225,19 +234,19 @@ func Struct(cfg any, opts Options) error {
 // itself implements Unwrap() []error to expose its (sentinel, cause) chain;
 // without ordering we would recurse into that chain and lose the user's
 // intent.
-func flattenValidateError(err error, receiverPath string) []*FieldError {
+func flattenValidateError(err error, receiverPath, delim string) []*FieldError {
 	if err == nil {
 		return nil
 	}
 
 	if fe, ok := err.(*FieldError); ok {
-		return []*FieldError{rebaseFieldError(fe, receiverPath)}
+		return []*FieldError{rebaseFieldError(fe, receiverPath, delim)}
 	}
 
 	if u, ok := err.(interface{ Unwrap() []error }); ok {
 		var out []*FieldError
 		for _, sub := range u.Unwrap() {
-			out = append(out, flattenValidateError(sub, receiverPath)...)
+			out = append(out, flattenValidateError(sub, receiverPath, delim)...)
 		}
 		return out
 	}
@@ -246,7 +255,7 @@ func flattenValidateError(err error, receiverPath string) []*FieldError {
 		if inner := u.Unwrap(); inner != nil {
 			var fe *FieldError
 			if errors.As(inner, &fe) {
-				return flattenValidateError(inner, receiverPath)
+				return flattenValidateError(inner, receiverPath, delim)
 			}
 		}
 	}
@@ -272,7 +281,7 @@ func flattenValidateError(err error, receiverPath string) []*FieldError {
 //
 // Tag, sentinel, and Value are filled in with invariant defaults when the
 // user didn't supply them.
-func rebaseFieldError(fe *FieldError, receiverPath string) *FieldError {
+func rebaseFieldError(fe *FieldError, receiverPath, delim string) *FieldError {
 	out := *fe
 	if out.Tag == "" {
 		out.Tag = "invariant"
@@ -281,20 +290,20 @@ func rebaseFieldError(fe *FieldError, receiverPath string) *FieldError {
 		out.sentinel = ErrInvariant
 	}
 	if receiverPath != "" {
-		out.Path = prefixIfRelative(out.Path, receiverPath)
-		out.Param = prefixIfRelative(out.Param, receiverPath)
+		out.Path = prefixIfRelative(out.Path, receiverPath, delim)
+		out.Param = prefixIfRelative(out.Param, receiverPath, delim)
 	}
 	return &out
 }
 
 // prefixIfRelative prepends prefix + delim to s when s does not already
 // contain delim. An empty s becomes prefix on its own.
-func prefixIfRelative(s, prefix string) string {
+func prefixIfRelative(s, prefix, delim string) string {
 	if s == "" {
 		return prefix
 	}
-	if strings.Contains(s, defaultDelim) {
+	if strings.Contains(s, delim) {
 		return s
 	}
-	return prefix + defaultDelim + s
+	return prefix + delim + s
 }
