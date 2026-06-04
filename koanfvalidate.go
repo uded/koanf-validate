@@ -184,7 +184,12 @@ func Struct(cfg any, opts Options) error {
 	}
 
 	for _, recipe := range wr.visitorRecipes {
-		receiver := recipe.resolve(rootValue)
+		receiver, ok := recipe.resolve(rootValue)
+		if !ok {
+			// Nil pointer along the recipe's path — the user never set this
+			// sub-config. Don't invent a zero value and call Validate() on it.
+			continue
+		}
 		userErr := callValidate(receiver)
 		if userErr == nil {
 			continue

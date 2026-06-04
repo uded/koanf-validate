@@ -237,6 +237,56 @@ func TestStruct_NormalPath_DoesNotHaveErrPathUnresolved(t *testing.T) {
 	}
 }
 
+// A nil *struct field whose type implements Validate() must NOT have
+// Validate() called on a synthetic zero value. The library walks the schema
+// at type-level for path mapping, but skips visitor execution when the
+// user's pointer is nil — the sub-config does not exist.
+type instrumentedValidate struct {
+	X int `koanf:"x"`
+}
+
+// validateCalled tracks invocation of instrumentedValidate.Validate. Mutated
+// only from a t.Cleanup-guarded test that resets it; not concurrency-safe
+// by design.
+var validateCalled bool
+
+func (o *instrumentedValidate) Validate() error {
+	validateCalled = true
+	return nil
+}
+
+type withOptionalSubCfg struct {
+	Server *instrumentedValidate `koanf:"server"`
+}
+
+func TestStruct_NilPointerStructValidator_IsSkipped(t *testing.T) {
+	// Not parallel — toggles a package-level flag observed by the assertion.
+	t.Cleanup(func() { validateCalled = false })
+	validateCalled = false
+
+	cfg := &withOptionalSubCfg{Server: nil}
+	if err := koanfvalidate.Struct(cfg, koanfvalidate.Options{}); err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if validateCalled {
+		t.Error("Validate() was called on a nil *struct field — must be skipped")
+	}
+}
+
+// Sanity: a non-nil pointer must still trigger Validate().
+func TestStruct_NonNilPointerStructValidator_IsCalled(t *testing.T) {
+	t.Cleanup(func() { validateCalled = false })
+	validateCalled = false
+
+	cfg := &withOptionalSubCfg{Server: &instrumentedValidate{X: 1}}
+	if err := koanfvalidate.Struct(cfg, koanfvalidate.Options{}); err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if !validateCalled {
+		t.Error("Validate() was not called on a non-nil *struct field")
+	}
+}
+
 // Two siblings claiming the same koanf segment is a developer error — they
 // silently aliased the same config key. The walker must detect this and
 // return ErrInvalidConfig instead of letting the path map be quietly

@@ -56,20 +56,22 @@ type fieldStep struct {
 
 // resolve walks the recipe's steps from rootValue down to the receiver.
 // rootValue must be the dereferenced root struct (an addressable struct
-// value) — the same shape resolveInput returns.
-func (r visitorRecipe) resolve(rootValue reflect.Value) reflect.Value {
+// value) — the same shape resolveInput returns. Returns (zero, false) when
+// any step encounters a nil pointer along the way: that field is absent
+// from the user's config and the library must not invent a synthetic zero
+// receiver to invoke Validate() on.
+func (r visitorRecipe) resolve(rootValue reflect.Value) (reflect.Value, bool) {
 	cur := rootValue
 	for _, step := range r.steps {
 		cur = cur.Field(step.index)
 		if step.deref {
 			if cur.IsNil() {
-				cur = reflect.New(cur.Type().Elem()).Elem()
-			} else {
-				cur = cur.Elem()
+				return reflect.Value{}, false
 			}
+			cur = cur.Elem()
 		}
 	}
-	return cur
+	return cur, true
 }
 
 // errorType is cached so hasValidate doesn't allocate a TypeFor[error] on
