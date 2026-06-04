@@ -30,11 +30,6 @@ type walkResult struct {
 	// reflect.Value receiver per call so the cached result never references
 	// a particular caller's struct instance.
 	visitorRecipes []visitorRecipe
-
-	// rootGoPath is the Go field path prefix used for the root. For named
-	// types validator/v10 prepends the type name (e.g. "Cfg.Field"); for
-	// anonymous struct literals it omits the prefix entirely (just "Field").
-	rootGoPath string
 }
 
 // visitorRecipe records the path from the root struct value down to a field
@@ -161,7 +156,6 @@ func walkType(rootType reflect.Type, pathTag, delim string) (*walkResult, error)
 		paths:           w.paths,
 		skippedPrefixes: w.skippedPrefixes,
 		visitorRecipes:  w.visitorRecipes,
-		rootGoPath:      rootGoPath,
 	}, nil
 }
 
