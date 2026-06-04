@@ -237,6 +237,33 @@ func TestStruct_NormalPath_DoesNotHaveErrPathUnresolved(t *testing.T) {
 	}
 }
 
+// errors.Join nested inside errors.Join must flatten correctly — every
+// leaf *FieldError reaches MultiError without being lost or wrapped.
+type nestedJoinValidate struct {
+	X int `koanf:"x"`
+}
+
+func (n *nestedJoinValidate) Validate() error {
+	return errors.Join(
+		&koanfvalidate.FieldError{Path: "first", Tag: "outer"},
+		errors.Join(
+			&koanfvalidate.FieldError{Path: "second", Tag: "inner_a"},
+			&koanfvalidate.FieldError{Path: "third", Tag: "inner_b"},
+		),
+	)
+}
+
+func TestStruct_NestedErrorsJoin_FlattensAllLeaves(t *testing.T) {
+	t.Parallel()
+	cfg := &nestedJoinValidate{}
+	me := requireMultiError(t, koanfvalidate.Struct(cfg, koanfvalidate.Options{}))
+	got := pathsOf(me)
+	want := []string{"first", "second", "third"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("nested errors.Join flatten: got %v, want %v", got, want)
+	}
+}
+
 // A Validate() method returning a Path that contains the delim is still
 // interpreted as relative to the receiver — the library does not attempt
 // to detect "absolute" paths via a leading delim or by substring search.
