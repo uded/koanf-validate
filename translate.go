@@ -173,10 +173,7 @@ func (redactedFieldError) Value() any { return nil }
 // the prefix path matches; so does any deeper field within that subtree.
 func isUnderSkippedPrefix(ns string, prefixes []string) bool {
 	for _, p := range prefixes {
-		if ns == p {
-			return true
-		}
-		if len(ns) > len(p) && ns[len(p)] == '.' && ns[:len(p)] == p {
+		if ns == p || strings.HasPrefix(ns, p+".") {
 			return true
 		}
 	}
