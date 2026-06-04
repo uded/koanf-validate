@@ -22,7 +22,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Conventional Commits check
-        uses: amannn/action-semantic-pull-request@v6
+        # Pinned to a specific commit SHA per OSSF supply-chain practice;
+        # Dependabot (see .github/dependabot.yml) opens PRs to bump it.
+        uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
