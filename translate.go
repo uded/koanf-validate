@@ -110,10 +110,14 @@ func translateFieldError(vfe validator.FieldError, paths map[string]string, skip
 	}
 
 	koanfPath, ok := paths[ns]
+	pathUnresolved := !ok
 	if !ok {
-		// Defensive fallback: keep the raw namespace if the walker didn't
-		// cover this path. This should not happen for well-formed structs;
-		// returning a usable error is better than dropping it silently.
+		// Fall back to the raw namespace so the error still names a
+		// recognizable field. ErrPathUnresolved is added to the resulting
+		// FieldError's Unwrap chain below so consumers can detect that the
+		// path is degraded (validator features like dive, maps, slice
+		// elements, and RegisterStructValidation produce namespaces the
+		// walker does not model).
 		koanfPath = ns
 	}
 
@@ -126,19 +130,43 @@ func translateFieldError(vfe validator.FieldError, paths map[string]string, skip
 		sentinel = ErrValidation
 	}
 
+	cause := validator.FieldError(vfe)
+	if !includeValues {
+		// Wrap the validator.FieldError so consumers walking errors.As to
+		// the cause chain see a redacted Value(). Every other method
+		// delegates to vfe via interface embedding.
+		cause = redactedFieldError{FieldError: vfe}
+	}
+
 	fe := &FieldError{
-		Path:     koanfPath,
-		Tag:      tag,
-		Param:    param,
-		RawParam: rawParam,
-		sentinel: sentinel,
-		cause:    vfe,
+		Path:           koanfPath,
+		Tag:            tag,
+		Param:          param,
+		RawParam:       rawParam,
+		sentinel:       sentinel,
+		cause:          cause,
+		pathUnresolved: pathUnresolved,
 	}
 	if includeValues {
 		fe.Value = vfe.Value()
 	}
 	return fe
 }
+
+// redactedFieldError wraps validator.FieldError to silence its Value()
+// method when Options.IncludeValues is false. All other methods promote
+// from the embedded interface, so errors.As(err, &validator.FieldError)
+// still reaches a fully functional FieldError view — only the failing
+// value is hidden, honoring the secret-safety contract.
+//
+// The struct does NOT implement Unwrap, so errors.As stops at this layer
+// and cannot walk through to the inner unredacted vfe.
+type redactedFieldError struct {
+	validator.FieldError
+}
+
+// Value overrides the embedded FieldError.Value to return nil.
+func (redactedFieldError) Value() any { return nil }
 
 // isUnderSkippedPrefix reports whether ns equals or sits under any of the
 // prefixes recorded by the walker for koanf:"-" fields. A field at exactly

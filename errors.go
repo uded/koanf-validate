@@ -49,6 +49,15 @@ var ErrFieldMismatch = errors.New("koanfvalidate: field constraint not satisfied
 // to discriminate user-authored invariant failures from tag-rule failures.
 var ErrInvariant = errors.New("koanfvalidate: invariant violated")
 
+// ErrPathUnresolved is added to a FieldError's Unwrap chain whenever the
+// underlying validator/v10 namespace could not be mapped to a koanf path.
+// This happens for validator features the walker does not model: dive,
+// map values, slice elements, and rules registered via
+// RegisterStructValidation. In those cases the FieldError's Path field
+// holds the raw Go field path (e.g. "Cfg.Tags[key]") rather than a koanf
+// path — alert your logging/alerting pipeline by matching this sentinel.
+var ErrPathUnresolved = errors.New("koanfvalidate: koanf path could not be resolved from validator namespace")
+
 // FieldError describes a single validation failure keyed by its koanf path
 // rather than the underlying Go field path. It satisfies the error interface
 // and supports errors.Is / errors.As against both the sentinel category and
@@ -85,12 +94,20 @@ type FieldError struct {
 	// produced by a tag rule. Nil for invariant errors produced by a
 	// Validate() method.
 	cause error
+
+	// pathUnresolved is set when the walker could not map the validator
+	// namespace to a koanf path. ErrPathUnresolved is added to the Unwrap
+	// chain so consumers can match it with errors.Is.
+	pathUnresolved bool
 }
 
 // Error renders the FieldError in a terse, consistent format:
 //
 //	<path>: <tag>             // tags without a parameter
 //	<path>: <tag>(<param>)    // tags with a parameter
+//	<path>: invariant: <msg>  // invariant errors include the cause's
+//	                          // message so wrapping context added by
+//	                          // a Validate() method survives to logs
 //
 // Examples:
 //
@@ -98,24 +115,37 @@ type FieldError struct {
 //	server.port: min(10)
 //	server.port: oneof(http https)
 //	server.port: gtefield(server.min_port)
+//	server: invariant: port 22 is reserved by the OS
 func (e *FieldError) Error() string {
-	if e.Param == "" {
-		return e.Path + ": " + e.Tag
+	base := e.Path + ": " + e.Tag
+	if e.Param != "" {
+		base += "(" + e.Param + ")"
 	}
-	return e.Path + ": " + e.Tag + "(" + e.Param + ")"
+	if e.Tag == "invariant" && e.cause != nil {
+		base += ": " + e.cause.Error()
+	}
+	return base
 }
 
-// Unwrap returns the chain {sentinel, cause}. The sentinel is always present;
-// the cause is the underlying validator.FieldError for tag rules or nil for
-// invariant errors. This lets callers do:
+// Unwrap returns the chain {sentinel, cause, ErrPathUnresolved?}. The
+// sentinel is always present; the cause is the underlying
+// validator.FieldError for tag rules or nil for invariant errors;
+// ErrPathUnresolved is appended only when the koanf path could not be
+// resolved (e.g. for dive, maps, slice elements). This lets callers do:
 //
 //	errors.Is(err, koanfvalidate.ErrRequired)            // sentinel match
 //	errors.As(err, &validator.ValidationErrors{})        // cause match
+//	errors.Is(err, koanfvalidate.ErrPathUnresolved)      // degraded path
 func (e *FieldError) Unwrap() []error {
-	if e.cause == nil {
-		return []error{e.sentinel}
+	out := make([]error, 0, 3)
+	out = append(out, e.sentinel)
+	if e.cause != nil {
+		out = append(out, e.cause)
 	}
-	return []error{e.sentinel, e.cause}
+	if e.pathUnresolved {
+		out = append(out, ErrPathUnresolved)
+	}
+	return out
 }
 
 // MultiError joins per-field validation failures into one error suitable for

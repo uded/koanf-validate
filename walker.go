@@ -4,13 +4,14 @@ import (
 	"encoding"
 	"fmt"
 	"reflect"
+	"sync"
 	"time"
 )
 
 // walkResult is what the walker produces: a map from Go field paths (matching
-// validator/v10's Namespace() shape) to koanf paths, plus a list of any
-// StructValidator instances encountered (with the koanf path of their
-// receiver) so the call site can invoke Validate() on each.
+// validator/v10's Namespace() shape) to koanf paths, plus type-level recipes
+// for invoking Validate() on any reachable struct that implements it. The
+// result is a pure function of (rootType, pathTag, delim) and is cached.
 type walkResult struct {
 	// paths maps a Go field path like "Cfg.Server.Port" to a koanf path
 	// like "server.port". Includes every field at every depth, plus every
@@ -24,20 +25,51 @@ type walkResult struct {
 	// rules. The translator uses these prefixes to drop those errors.
 	skippedPrefixes []string
 
-	// visitors lists every struct (at any depth) whose type implements
-	// StructValidator. Order is depth-first, matching the walk.
-	visitors []structValidatorVisitor
+	// visitorRecipes describes how to reach each Validate()-implementing
+	// struct from the root value. Stored type-side only; resolved into a
+	// reflect.Value receiver per call so the cached result never references
+	// a particular caller's struct instance.
+	visitorRecipes []visitorRecipe
 
 	// rootGoPath is the Go field path prefix used for the root. For named
 	// types validator/v10 prepends the type name (e.g. "Cfg.Field"); for
 	// anonymous struct literals it omits the prefix entirely (just "Field").
-	// We mirror that convention so map keys match validator's Namespace.
 	rootGoPath string
 }
 
-type structValidatorVisitor struct {
+// visitorRecipe records the path from the root struct value down to a field
+// whose type implements the StructValidator interface. Resolving a recipe
+// against a particular root value yields the receiver to call Validate() on.
+type visitorRecipe struct {
 	koanfPath string
-	receiver  reflect.Value // addressable, so pointer-receiver methods work
+	steps     []fieldStep
+}
+
+// fieldStep is one hop along a recipe: pick a field by index, and (if it is
+// a pointer-to-struct) dereference it. A nil pointer is replaced with a
+// freshly-allocated zero value so Validate() runs against well-defined state
+// — matching the walker's value-tree-traversal behavior.
+type fieldStep struct {
+	index int
+	deref bool
+}
+
+// resolve walks the recipe's steps from rootValue down to the receiver.
+// rootValue must be the dereferenced root struct (an addressable struct
+// value) — the same shape resolveInput returns.
+func (r visitorRecipe) resolve(rootValue reflect.Value) reflect.Value {
+	cur := rootValue
+	for _, step := range r.steps {
+		cur = cur.Field(step.index)
+		if step.deref {
+			if cur.IsNil() {
+				cur = reflect.New(cur.Type().Elem()).Elem()
+			} else {
+				cur = cur.Elem()
+			}
+		}
+	}
+	return cur
 }
 
 // errorType is cached so hasValidate doesn't allocate a TypeFor[error] on
@@ -51,18 +83,55 @@ var textUnmarshalerType = reflect.TypeFor[encoding.TextUnmarshaler]()
 // durationType is treated as an opaque leaf even though it is technically a
 // named integer type. It is the most common leaf type users hit and naive
 // descent would still terminate immediately (it has no fields), but listing
-// it explicitly makes intent clear and matches sister repo's convention.
+// it explicitly makes intent clear.
 var durationType = reflect.TypeFor[time.Duration]()
 
+// walkCache memoizes walk results across Struct() calls. Keyed on the tuple
+// the walker actually depends on: (rootType, pathTag, delim). Values are
+// immutable *walkResult — the visitor recipes hold no per-call state, so
+// reading the cached entry from many goroutines is safe.
+var walkCache sync.Map
+
+type walkCacheKey struct {
+	rootType reflect.Type
+	pathTag  string
+	delim    string
+}
+
 // walkStruct validates that target is a non-nil pointer to a struct, then
-// walks it to produce a walkResult. Returns ErrInvalidInput for bad inputs
-// and ErrCyclicType if a struct type recursively references itself.
+// returns the cached walkResult for its type (computing it on first sight).
+// Returns ErrInvalidInput for bad inputs and ErrCyclicType if a struct type
+// recursively references itself. Cycle errors are not cached because the
+// returned error already references the offending Go type by name, which
+// is sufficient diagnostic on the next call.
 func walkStruct(target any, pathTag, delim string) (*walkResult, error) {
 	v, err := resolveInput(target)
 	if err != nil {
 		return nil, err
 	}
 
+	key := walkCacheKey{rootType: v.Type(), pathTag: pathTag, delim: delim}
+	if cached, ok := walkCache.Load(key); ok {
+		return cached.(*walkResult), nil
+	}
+
+	wr, err := walkType(v.Type(), pathTag, delim)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store and return: in case two goroutines lost the race to populate
+	// the same key, both copies are semantically identical so we don't
+	// care which wins.
+	walkCache.Store(key, wr)
+	return wr, nil
+}
+
+// walkType performs the cold-path traversal of a struct type and produces
+// the walkResult. It only reads reflect.Type — no value is needed, since
+// the walker discovers Validate() implementations from method sets and
+// records recipes (not receiver values).
+func walkType(rootType reflect.Type, pathTag, delim string) (*walkResult, error) {
 	w := &walker{
 		pathTag:  pathTag,
 		delim:    delim,
@@ -74,43 +143,41 @@ func walkStruct(target any, pathTag, delim string) (*walkResult, error) {
 	// named types but omits it entirely for anonymous struct literals.
 	// Type.Name() returns "" for the anonymous case, which is exactly the
 	// rootGoPath we want.
-	rootGoPath := v.Type().Name()
+	rootGoPath := rootType.Name()
 	if rootGoPath != "" {
 		w.paths[rootGoPath] = ""
 	}
-	if hasValidate(v.Type()) {
-		w.visitors = append(w.visitors, structValidatorVisitor{
-			koanfPath: "",
-			receiver:  v,
-		})
+	if hasValidate(rootType) {
+		w.visitorRecipes = append(w.visitorRecipes, visitorRecipe{koanfPath: ""})
 	}
 
-	if err := w.walkStruct(v, rootGoPath, ""); err != nil {
+	if err := w.walkType(rootType, rootGoPath, "", nil); err != nil {
 		return nil, err
 	}
 
 	return &walkResult{
 		paths:           w.paths,
 		skippedPrefixes: w.skippedPrefixes,
-		visitors:        w.visitors,
+		visitorRecipes:  w.visitorRecipes,
 		rootGoPath:      rootGoPath,
 	}, nil
 }
 
 // walker carries immutable configuration and mutable per-walk state through
 // the recursive descent. Keeping state on the walker (rather than the recursive
-// signature) keeps walkStruct's argument list small.
+// signature) keeps walkType's argument list small.
 type walker struct {
 	pathTag, delim  string
 	paths           map[string]string
 	skippedPrefixes []string
-	visitors        []structValidatorVisitor
+	visitorRecipes  []visitorRecipe
 	visiting        map[reflect.Type]struct{}
 }
 
-func (w *walker) walkStruct(v reflect.Value, goPath, koanfPath string) error {
-	t := v.Type()
-
+// walkType recurses through t accumulating path mappings, skip prefixes, and
+// visitor recipes. parentSteps is the field-step chain from the root to t;
+// child recipes extend it by one fieldStep.
+func (w *walker) walkType(t reflect.Type, goPath, koanfPath string, parentSteps []fieldStep) error {
 	// Cycle guard. Two values of the same Go type share an identical
 	// reflect.Type, so this catches both self-reference (Node.Next *Node)
 	// and mutual recursion (A→B→A).
@@ -159,26 +226,16 @@ func (w *walker) walkStruct(v reflect.Value, goPath, koanfPath string) error {
 			continue
 		}
 
-		fv := v.Field(i)
-		if isPointer {
-			if fv.IsNil() {
-				// Use a fresh zero value for the walk; we don't allocate
-				// or mutate the user's input. The cycle guard still fires
-				// on type identity, so pointer-recursive types terminate.
-				fv = reflect.New(ft).Elem()
-			} else {
-				fv = fv.Elem()
-			}
-		}
+		childSteps := append(append([]fieldStep(nil), parentSteps...), fieldStep{index: i, deref: isPointer})
 
 		if hasValidate(ft) {
-			w.visitors = append(w.visitors, structValidatorVisitor{
+			w.visitorRecipes = append(w.visitorRecipes, visitorRecipe{
 				koanfPath: childKoanfPath,
-				receiver:  fv,
+				steps:     childSteps,
 			})
 		}
 
-		if err := w.walkStruct(fv, childGoPath, childKoanfPath); err != nil {
+		if err := w.walkType(ft, childGoPath, childKoanfPath, childSteps); err != nil {
 			return err
 		}
 	}
@@ -225,8 +282,6 @@ func hasValidateMethod(t reflect.Type) bool {
 // receiver methods too via Go's promoted method set). Returns nil if no
 // Validate method is callable on either form.
 func callValidate(receiver reflect.Value) error {
-	// Prefer pointer receiver: its method set is a superset of the value
-	// receiver's, so pointer-receiver Validate methods are reachable.
 	var fn reflect.Value
 	if receiver.CanAddr() {
 		fn = receiver.Addr().MethodByName("Validate")

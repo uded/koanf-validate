@@ -24,9 +24,40 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/go-playground/validator/v10"
 )
+
+// defaultValidatorOnce + defaultValidatorInstance hold a shared
+// *validator.Validate configured with the default tag name. Each Struct call
+// that takes no caller-supplied validator and leaves Options.ValidateTag at
+// its default reuses this instance — preserving validator/v10's per-type
+// reflection cache across calls. validator/v10's Struct method is documented
+// concurrent-safe; only the mutators (SetTagName, RegisterValidation) are
+// not, and we only ever call those during construction.
+var (
+	defaultValidatorOnce     sync.Once
+	defaultValidatorInstance *validator.Validate
+)
+
+// defaultValidator returns a *validator.Validate configured for tagName.
+// When tagName matches the library default, a package-level singleton is
+// reused (the hot path). Custom tag names build a fresh validator since
+// SetTagName is not concurrency-safe across many such customizations.
+func defaultValidator(tagName string) *validator.Validate {
+	if tagName == defaultValidateTag {
+		defaultValidatorOnce.Do(func() {
+			v := validator.New()
+			v.SetTagName(defaultValidateTag)
+			defaultValidatorInstance = v
+		})
+		return defaultValidatorInstance
+	}
+	v := validator.New()
+	v.SetTagName(tagName)
+	return v
+}
 
 const (
 	defaultPathTag     = "koanf"
@@ -40,13 +71,19 @@ type Options struct {
 	// Validator is the underlying *validator.Validate instance used to run
 	// tag-based rules. Pass a pre-configured instance to register custom
 	// rules (RegisterValidation), aliases (RegisterAlias), struct-level
-	// validators (RegisterStructValidation), or translations. When nil, a
-	// fresh instance is constructed internally with default settings.
+	// validators (RegisterStructValidation), or translations.
 	//
-	// Note: Struct calls SetTagName on the validator each invocation to
-	// honor Options.ValidateTag; if you share a *validator.Validate across
-	// koanf-validate and other validation callers, expect its current tag
-	// name to be the one most recently set.
+	// When non-nil, the caller MUST have already called
+	//   v.SetTagName(opts.ValidateTag)
+	// (or SetTagName("koanf-validate") when ValidateTag is left default).
+	// The library does not mutate caller-supplied validators — doing so
+	// would race against any goroutine concurrently calling v.Struct(...)
+	// on the same instance.
+	//
+	// When nil, the library constructs and configures a fresh validator
+	// per call with the correct tag name; share an instance via this
+	// field if you need to amortize validator/v10's reflection cache or
+	// register custom rules.
 	Validator *validator.Validate
 
 	// PathTag names the struct tag whose value supplies the koanf path
@@ -58,9 +95,17 @@ type Options struct {
 	ValidateTag string
 
 	// IncludeValues, when true, populates FieldError.Value with the actual
-	// failing field value. Off by default to avoid leaking secrets (e.g. a
-	// password field that fails a min=N rule would otherwise dump the
-	// password into logs).
+	// failing field value AND keeps the underlying validator.FieldError's
+	// Value() reachable through the cause chain.
+	//
+	// Off by default to avoid leaking secrets — a password field failing
+	// min=N would otherwise dump the password into logs both via
+	// FieldError.Value and via errors.As(err, &validator.FieldError).Value().
+	//
+	// Trade-off: the safe default also hides non-sensitive failing values
+	// (port numbers, timeouts, enum mismatches) from SREs. Re-validating
+	// with IncludeValues=true at a debug log level is a reasonable pattern
+	// when the redacted message is insufficient.
 	IncludeValues bool
 }
 
@@ -102,9 +147,14 @@ func Struct(cfg any, opts Options) error {
 		opts.ValidateTag = defaultValidateTag
 	}
 
-	// walkStruct also validates the input shape and surfaces ErrInvalidInput
-	// / ErrCyclicType. Running it first means a bad input is rejected before
-	// we touch the validator.
+	// Resolve the input first so that bad inputs are rejected before any
+	// reflection, cache lookup, or validator work. Holds the receiver for
+	// visitor resolution below.
+	rootValue, err := resolveInput(cfg)
+	if err != nil {
+		return err
+	}
+
 	wr, err := walkStruct(cfg, opts.PathTag, defaultDelim)
 	if err != nil {
 		return err
@@ -112,9 +162,8 @@ func Struct(cfg any, opts Options) error {
 
 	val := opts.Validator
 	if val == nil {
-		val = validator.New()
+		val = defaultValidator(opts.ValidateTag)
 	}
-	val.SetTagName(opts.ValidateTag)
 
 	var fieldErrors []*FieldError
 
@@ -134,12 +183,13 @@ func Struct(cfg any, opts Options) error {
 		}
 	}
 
-	for _, vis := range wr.visitors {
-		userErr := callValidate(vis.receiver)
+	for _, recipe := range wr.visitorRecipes {
+		receiver := recipe.resolve(rootValue)
+		userErr := callValidate(receiver)
 		if userErr == nil {
 			continue
 		}
-		fieldErrors = append(fieldErrors, flattenValidateError(userErr, vis.koanfPath)...)
+		fieldErrors = append(fieldErrors, flattenValidateError(userErr, recipe.koanfPath)...)
 	}
 
 	if len(fieldErrors) == 0 {
@@ -159,8 +209,12 @@ func Struct(cfg any, opts Options) error {
 // slice of *FieldError. Walk order:
 //   - direct *FieldError → rebased to receiver path
 //   - multi-error (errors.Join → Unwrap() []error) → recurse on each leaf
-//   - single-wrap (fmt.Errorf %w → Unwrap() error) → recurse on the inner
-//   - any other error → one invariant FieldError at receiver path
+//   - single-wrap whose chain reaches a *FieldError → recurse so the
+//     buried FieldError is used as-is
+//   - any other error (including fmt.Errorf("…: %w", plain)) → one invariant
+//     FieldError at receiver path with the WHOLE wrapped err as cause, so
+//     the user's wrapping message survives and errors.Is reaches every
+//     sentinel in the chain
 //
 // The direct check must precede the multi-error check because *FieldError
 // itself implements Unwrap() []error to expose its (sentinel, cause) chain;
@@ -185,7 +239,10 @@ func flattenValidateError(err error, receiverPath string) []*FieldError {
 
 	if u, ok := err.(interface{ Unwrap() error }); ok {
 		if inner := u.Unwrap(); inner != nil {
-			return flattenValidateError(inner, receiverPath)
+			var fe *FieldError
+			if errors.As(inner, &fe) {
+				return flattenValidateError(inner, receiverPath)
+			}
 		}
 	}
 
