@@ -1,8 +1,11 @@
 package koanfvalidate_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"sort"
 	"strings"
@@ -234,6 +237,69 @@ func TestStruct_NormalPath_DoesNotHaveErrPathUnresolved(t *testing.T) {
 	err := koanfvalidate.Struct(cfg, koanfvalidate.Options{})
 	if errors.Is(err, koanfvalidate.ErrPathUnresolved) {
 		t.Error("errors.Is(err, ErrPathUnresolved) = true on a fully-mapped struct")
+	}
+}
+
+// FieldError.LogValue must surface every structured attribute (path, tag,
+// param, raw_param, value, cause) so a slog handler emits them as typed
+// JSON fields rather than the Error() string.
+func TestFieldError_LogValue_RendersStructuredAttrs(t *testing.T) {
+	t.Parallel()
+	cfg := &simpleCfg{} // Name required, Age min=0 ok
+	me := requireMultiError(t, koanfvalidate.Struct(cfg, koanfvalidate.Options{}))
+	fe := findByPath(me, "name")
+	if fe == nil {
+		t.Fatalf("no FieldError at name")
+	}
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	logger.Info("validation failed", "err", fe)
+
+	var line map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &line); err != nil {
+		t.Fatalf("not valid JSON: %v\n%s", err, buf.String())
+	}
+	errAttr, ok := line["err"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected err to be a group; got %T: %v", line["err"], line["err"])
+	}
+	if errAttr["path"] != "name" {
+		t.Errorf("path: got %v, want name", errAttr["path"])
+	}
+	if errAttr["tag"] != "required" {
+		t.Errorf("tag: got %v, want required", errAttr["tag"])
+	}
+	if _, hasValue := errAttr["value"]; hasValue {
+		t.Errorf("value attribute must be absent when IncludeValues=false; got %v", errAttr["value"])
+	}
+}
+
+// MultiError.LogValue renders as {count, errors:[…]} with each FieldError
+// using its own structured attributes.
+func TestMultiError_LogValue_RendersGroup(t *testing.T) {
+	t.Parallel()
+	cfg := &simpleCfg{}
+	err := koanfvalidate.Struct(cfg, koanfvalidate.Options{})
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	logger.Info("config rejected", "result", err)
+
+	var line map[string]any
+	if jerr := json.Unmarshal(buf.Bytes(), &line); jerr != nil {
+		t.Fatalf("not valid JSON: %v", jerr)
+	}
+	result, ok := line["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("result not a group: %T", line["result"])
+	}
+	if got, want := result["count"], float64(1); got != want {
+		t.Errorf("count: got %v, want %v", got, want)
+	}
+	errs, ok := result["errors"].([]any)
+	if !ok || len(errs) != 1 {
+		t.Fatalf("errors not a 1-element array: %v", result["errors"])
 	}
 }
 

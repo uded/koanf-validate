@@ -3,6 +3,7 @@ package koanfvalidate
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 )
 
@@ -135,6 +136,33 @@ func (e *FieldError) Error() string {
 	return base
 }
 
+// LogValue implements slog.LogValuer so structured loggers emit each
+// FieldError as a group of typed attributes (path, tag, param, …) rather
+// than just the Error() string. Honors the redaction contract: Value is
+// only included when set (which only happens when IncludeValues=true at
+// the originating Struct call).
+func (e *FieldError) LogValue() slog.Value {
+	attrs := make([]slog.Attr, 0, 6)
+	attrs = append(attrs, slog.String("path", e.Path))
+	attrs = append(attrs, slog.String("tag", e.Tag))
+	if e.Param != "" {
+		attrs = append(attrs, slog.String("param", e.Param))
+	}
+	if e.RawParam != "" && e.RawParam != e.Param {
+		attrs = append(attrs, slog.String("raw_param", e.RawParam))
+	}
+	if e.Value != nil {
+		attrs = append(attrs, slog.Any("value", e.Value))
+	}
+	if e.pathUnresolved {
+		attrs = append(attrs, slog.Bool("path_unresolved", true))
+	}
+	if e.cause != nil {
+		attrs = append(attrs, slog.String("cause", e.cause.Error()))
+	}
+	return slog.GroupValue(attrs...)
+}
+
 // Unwrap returns the chain {sentinel, cause, ErrPathUnresolved?}. The
 // sentinel is always present; the cause is the underlying
 // validator.FieldError for tag rules or nil for invariant errors;
@@ -187,4 +215,14 @@ func (m *MultiError) Unwrap() []error {
 		out[i] = fe
 	}
 	return out
+}
+
+// LogValue implements slog.LogValuer so a MultiError can be passed straight
+// to a structured logger and yields a group of {count, errors}, where each
+// FieldError uses its own LogValue rendering.
+func (m *MultiError) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.Int("count", len(m.Errors)),
+		slog.Any("errors", m.Errors),
+	)
 }
