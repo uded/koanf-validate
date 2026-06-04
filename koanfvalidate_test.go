@@ -237,6 +237,28 @@ func TestStruct_NormalPath_DoesNotHaveErrPathUnresolved(t *testing.T) {
 	}
 }
 
+// koanf:"-" on a struct field must skip not just the field but its entire
+// subtree. The walker records the skip prefix; the translator drops any
+// validator/v10 error whose namespace falls under that prefix, even when
+// the children carry their own koanf-validate tags.
+type skippedSubtreeChildren struct {
+	ID    string `koanf-validate:"required"`
+	Inner string `koanf-validate:"required,uuid"`
+}
+
+type withSkippedSubtree struct {
+	Visible string                 `koanf:"visible" koanf-validate:"required"`
+	Hidden  skippedSubtreeChildren `koanf:"-"`
+}
+
+func TestStruct_DashTagSkipsEntireSubtree(t *testing.T) {
+	t.Parallel()
+	cfg := &withSkippedSubtree{Visible: "ok"}
+	if err := koanfvalidate.Struct(cfg, koanfvalidate.Options{}); err != nil {
+		t.Fatalf("expected nil (Hidden subtree should be skipped including required children), got %v", err)
+	}
+}
+
 // errors.Join nested inside errors.Join must flatten correctly — every
 // leaf *FieldError reaches MultiError without being lost or wrapped.
 type nestedJoinValidate struct {
