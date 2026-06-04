@@ -244,13 +244,48 @@ The structured `Path` / `Tag` / `Param` fields are exposed so you can build rich
 
 ## Secret safety
 
-`Options.IncludeValues` is `false` by default. A `password` field failing `min=16` produces:
+`Options.IncludeValues` is `false` by default — every failing value is redacted at every error surface. A `password` field failing `min=16` produces:
 
 ```
 password: min(16)
 ```
 
-…and `FieldError.Value` is `nil`. Opt in with `IncludeValues: true` only in environments where the failing values are not sensitive (e.g. integration tests).
+…and both `FieldError.Value` and the underlying `validator.FieldError.Value()` reached via `errors.As` return `nil`. The cause chain stays intact so `errors.Is`/`errors.As` keep working for everything except the raw value.
+
+### Diagnosability trade-off
+
+The safe default has a cost: SREs cannot see the actual failing value for non-sensitive fields (port numbers, timeouts, enum mismatches). For two reasonable patterns:
+
+**Whole-application opt-in** — fine in environments where config values are not sensitive (CI test logs, local development):
+
+```go
+err := koanfvalidate.Struct(&cfg, koanfvalidate.Options{IncludeValues: true})
+```
+
+**Per-call opt-in** — re-validate just for diagnostics after a redacted failure:
+
+```go
+if err := koanfvalidate.Struct(&cfg, koanfvalidate.Options{}); err != nil {
+    debugErr := koanfvalidate.Struct(&cfg, koanfvalidate.Options{IncludeValues: true})
+    log.Printf("config rejected (redacted): %v", err)
+    log.Debug("config rejected (with values): %v", debugErr)
+}
+```
+
+A future release may add per-field sensitivity tags so non-sensitive fields can expose values while genuine secrets remain hidden — for now the choice is whole-call.
+
+### Path resolution caveats
+
+Validator features the walker does not model — `dive`, map values, slice elements, and rules registered via `RegisterStructValidation` — produce errors whose `Path` falls back to the raw Go field path (e.g. `Cfg.Tags[key]`). `ErrPathUnresolved` is added to the `Unwrap` chain on those errors:
+
+```go
+if errors.Is(err, koanfvalidate.ErrPathUnresolved) {
+    // At least one error has a degraded path — surface to your alerting
+    // pipeline, or fall back to the raw validator messages.
+}
+```
+
+Errors at well-modeled paths (the common case — plain struct fields and intermediate structs) do not carry the sentinel.
 
 ## What it doesn't do
 
