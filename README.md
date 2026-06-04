@@ -1,14 +1,21 @@
 # koanf-validate
 
+Validate [koanf](https://github.com/knadh/koanf)-populated structs with errors keyed by **koanf paths** (`server.port`) instead of Go field paths (`Config.Server.Port`) — the same paths your operators edit in YAML and env vars.
+
 [![CI](https://github.com/uded/koanf-validate/actions/workflows/ci.yml/badge.svg)](https://github.com/uded/koanf-validate/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/uded/koanf-validate.svg)](https://pkg.go.dev/github.com/uded/koanf-validate)
 [![Go Report Card](https://goreportcard.com/badge/github.com/uded/koanf-validate)](https://goreportcard.com/report/github.com/uded/koanf-validate)
 [![Release](https://img.shields.io/github/v/release/uded/koanf-validate)](https://github.com/uded/koanf-validate/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/uded/koanf-validate)](./LICENSE)
 
-Validates a [koanf](https://github.com/knadh/koanf)-populated struct and reports failures keyed by **koanf paths** (`server.port`) rather than Go field paths (`Config.Server.Port`). Operators read the same path in your logs that they edit in their YAML and env vars.
+## Related projects
 
-A thin adapter over [`go-playground/validator/v10`](https://github.com/go-playground/validator). Zero new rules — the ~100 built-ins (`required`, `min`, `oneof`, `email`, `gtefield`, …) are all available. Companion to [`koanf-structdefaults`](https://github.com/uded/koanf-structdefaults): defaults flow `struct tags → koanf`; validation flows `koanf → struct → diagnostics keyed by koanf paths`.
+This validator composes with two sibling packages in the same family:
+
+- **[koanf-structdefaults](https://github.com/uded/koanf-structdefaults)** — populate a koanf instance from `koanf-default:"…"` struct tags. The natural *floor* layer below file, env, and remote providers in the load order.
+- **[koanf-etcd](https://github.com/uded/koanf-etcd)** — production-grade koanf v2 Provider for etcd v3: auth/TLS, nested output, watch with reconnect/resume/resync, debounce, BYO `clientv3.Client`.
+
+Typical pipeline: load with `structdefaults` (and/or `koanf-etcd`, file, env) → `k.Unmarshal(&cfg)` → `koanfvalidate.Struct(&cfg, …)` as the post-load gate.
 
 ## Why
 
@@ -250,13 +257,6 @@ password: min(16)
 - **Tell you which koanf layer produced the value.** `koanf/v2` exposes no provider-of-origin API; after `Unmarshal` the layers are collapsed. The library validates the resulting struct.
 - **Normalize values before validation.** Lowercasing emails, trimming whitespace, etc. — run those yourself before calling `Struct`.
 - **Reinvent validator rules.** No new rule grammar, no new tag syntax. `koanf-validate` is a translation layer.
-
-## Related projects
-
-Companion libraries in the same koanf ecosystem:
-
-- **[koanf-structdefaults](https://github.com/uded/koanf-structdefaults)** — koanf Provider that reads `koanf-default:"…"` struct tags and emits a nested defaults map. Pairs naturally with `koanf-validate`: defaults flow `tags → koanf`; validation flows `koanf → struct → koanf-path-keyed diagnostics`.
-- **[koanf-etcd](https://github.com/uded/koanf-etcd)** — production-grade koanf v2 Provider for etcd v3: auth/TLS, nested output, watch with reconnect/resume/resync, debounce, BYO `clientv3.Client`.
 
 ## License
 
