@@ -7,6 +7,13 @@ import (
 	"strings"
 )
 
+// invariantTag is the FieldError.Tag value used for failures produced by a
+// user's Validate() method (plain errors, wrapped errors, or *FieldError
+// values that didn't specify their own Tag). Exposed as a constant so
+// errors.go, koanfvalidate.go, and the tests all reference one source of
+// truth instead of repeating the string literal.
+const invariantTag = "invariant"
+
 // ErrInvalidInput is returned when the target passed to Struct is nil, a
 // non-pointer, a nil pointer, or a pointer to a non-struct value.
 var ErrInvalidInput = errors.New("koanfvalidate: input must be a non-nil pointer to a struct")
@@ -130,7 +137,7 @@ func (e *FieldError) Error() string {
 	if e.Param != "" {
 		base += "(" + e.Param + ")"
 	}
-	if e.Tag == "invariant" && e.cause != nil {
+	if e.Tag == invariantTag && e.cause != nil {
 		base += ": " + e.cause.Error()
 	}
 	return base

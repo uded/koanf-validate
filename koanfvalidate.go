@@ -263,7 +263,7 @@ func flattenValidateError(err error, receiverPath, delim string) []*FieldError {
 
 	return []*FieldError{{
 		Path:     receiverPath,
-		Tag:      "invariant",
+		Tag:      invariantTag,
 		sentinel: ErrInvariant,
 		cause:    err,
 	}}
@@ -284,7 +284,7 @@ func flattenValidateError(err error, receiverPath, delim string) []*FieldError {
 func rebaseFieldError(fe *FieldError, receiverPath, delim string) *FieldError {
 	out := *fe
 	if out.Tag == "" {
-		out.Tag = "invariant"
+		out.Tag = invariantTag
 	}
 	if out.sentinel == nil {
 		out.sentinel = ErrInvariant
