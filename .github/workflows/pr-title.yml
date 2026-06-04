@@ -1,0 +1,50 @@
+name: PR title check
+
+# Enforces Conventional Commits format on pull-request titles so the
+# CHANGELOG stays parseable. The action reads the PR title via the GitHub
+# API and matches it against the allowed types; we do NOT splice the title
+# into any run: command, so there is no command-injection surface.
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+
+permissions:
+  pull-requests: read
+
+jobs:
+  check:
+    name: Validate title format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Conventional Commits check
+        uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            refactor
+            perf
+            test
+            docs
+            chore
+            ci
+            build
+            revert
+          requireScope: false
+          # Subject (everything after "type: ") must start lowercase and
+          # not end with a period — matches the project's conventional
+          # commit habit documented in CONTRIBUTING.md.
+          subjectPattern: ^[a-z].*[^.]$
+          subjectPatternError: |
+            The PR title subject must start with a lowercase letter and not end with a period.
+            Examples:
+              feat: add Options.Delim
+              fix: redact validator.FieldError.Value() through cause chain
+              ci: pin golangci-lint to v2.12.2
