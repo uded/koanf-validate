@@ -112,6 +112,148 @@ type withNestedValidate struct {
 	Server pointerValidate `koanf:"server"`
 }
 
+// Triggers validator/v10's dive rule, whose namespaces (e.g. "diveCfg.Tags[key]")
+// fall outside the walker's path map. Used to assert that the resulting
+// FieldError exposes ErrPathUnresolved through its Unwrap chain.
+type diveCfg struct {
+	Tags map[string]string `koanf:"tags" koanf-validate:"dive,required"`
+}
+
+// cyclicTU has both a self-reference AND a TextUnmarshaler implementation.
+// If the walker treats TextUnmarshaler types as opaque leaves, it never
+// descends into cyclicTU and so never observes the cycle. If the walker
+// descended (a regression), the cycle guard would fire and Struct would
+// return ErrCyclicType — making this fixture a precise distinguisher.
+type cyclicTU struct {
+	raw  string
+	Self *cyclicTU
+}
+
+func (t *cyclicTU) UnmarshalText(b []byte) error { t.raw = string(b); return nil }
+
+type cyclicTUCfg struct {
+	Addr cyclicTU `koanf:"addr"`
+}
+
+// Invariant errors come from a user's Validate() method, not from validator/v10.
+// errors.As(fe, &validator.FieldError) must therefore return false — there is
+// no underlying validator.FieldError to expose.
+func TestStruct_InvariantError_HasNoValidatorCause(t *testing.T) {
+	t.Parallel()
+	cfg := &valueValidate{X: 7} // Validate() returns a plain error
+	me := requireMultiError(t, koanfvalidate.Struct(cfg, koanfvalidate.Options{}))
+	fe := findByPath(me, "")
+	if fe == nil {
+		t.Fatalf("no FieldError at root; got %v", pathsOf(me))
+	}
+	if !errors.Is(fe, koanfvalidate.ErrInvariant) {
+		t.Error("errors.Is(fe, ErrInvariant) should be true")
+	}
+	var vfe validator.FieldError
+	if errors.As(fe, &vfe) {
+		t.Errorf("errors.As to validator.FieldError must fail for invariant errors; got %v", vfe)
+	}
+}
+
+// TextUnmarshaler implementations are opaque leaves — the walker must NOT
+// descend into them. cyclicTU embeds a self-reference that would trip the
+// cycle guard if the walker recursed in.
+func TestWalker_TextUnmarshaler_IsLeaf(t *testing.T) {
+	t.Parallel()
+	cfg := &cyclicTUCfg{}
+	err := koanfvalidate.Struct(cfg, koanfvalidate.Options{})
+	if errors.Is(err, koanfvalidate.ErrCyclicType) {
+		t.Fatal("walker descended into a TextUnmarshaler type; opaque-leaf treatment regressed")
+	}
+	if err != nil {
+		t.Fatalf("expected nil (no rules on cfg), got %v", err)
+	}
+}
+
+// Rules outside the tag→sentinel table map to ErrValidation (the generic
+// parent) — not to a specific category sentinel. Custom rules registered
+// by the caller exercise this fallback.
+func TestStruct_UnknownTag_MapsToErrValidation(t *testing.T) {
+	t.Parallel()
+	v := validator.New()
+	v.SetTagName("koanf-validate")
+	if err := v.RegisterValidation("not_in_sentinel_table", func(fl validator.FieldLevel) bool {
+		return false
+	}); err != nil {
+		t.Fatalf("RegisterValidation: %v", err)
+	}
+	type cfg struct {
+		X string `koanf:"x" koanf-validate:"not_in_sentinel_table"`
+	}
+	me := requireMultiError(t, koanfvalidate.Struct(&cfg{X: "anything"}, koanfvalidate.Options{Validator: v}))
+	fe := findByPath(me, "x")
+	if fe == nil {
+		t.Fatalf("no FieldError at x")
+	}
+	if !errors.Is(fe, koanfvalidate.ErrValidation) {
+		t.Error("errors.Is(fe, ErrValidation) should be true for unmapped tag")
+	}
+	if errors.Is(fe, koanfvalidate.ErrRequired) {
+		t.Error("custom rule unmapped tag must not match ErrRequired")
+	}
+}
+
+// When the walker cannot map a validator namespace to a koanf path
+// (e.g. dive, maps, slice elements), the FieldError must include
+// ErrPathUnresolved in its Unwrap chain so consumers can detect the
+// degradation. The Path field falls back to the raw Go namespace.
+func TestStruct_DegradedPath_AddsErrPathUnresolved(t *testing.T) {
+	t.Parallel()
+	cfg := &diveCfg{Tags: map[string]string{"k": ""}}
+	me := requireMultiError(t, koanfvalidate.Struct(cfg, koanfvalidate.Options{}))
+	var degraded *koanfvalidate.FieldError
+	for _, fe := range me.Errors {
+		if errors.Is(fe, koanfvalidate.ErrPathUnresolved) {
+			degraded = fe
+			break
+		}
+	}
+	if degraded == nil {
+		t.Fatalf("expected a FieldError with ErrPathUnresolved; got paths %v", pathsOf(me))
+	}
+	// Category sentinel must still apply on the same FieldError.
+	if !errors.Is(degraded, koanfvalidate.ErrRequired) {
+		t.Error("errors.Is(degraded, ErrRequired) = false — category sentinel lost")
+	}
+	// Path falls back to the raw namespace (some kind of [key] reference).
+	if !strings.Contains(degraded.Path, "Tags") {
+		t.Errorf("Path: got %q, want a fallback containing Tags", degraded.Path)
+	}
+}
+
+// Well-modeled paths must NOT carry ErrPathUnresolved — guard against
+// adding it spuriously to non-degraded errors.
+func TestStruct_NormalPath_DoesNotHaveErrPathUnresolved(t *testing.T) {
+	t.Parallel()
+	cfg := &simpleCfg{} // Name is required and missing
+	err := koanfvalidate.Struct(cfg, koanfvalidate.Options{})
+	if errors.Is(err, koanfvalidate.ErrPathUnresolved) {
+		t.Error("errors.Is(err, ErrPathUnresolved) = true on a fully-mapped struct")
+	}
+}
+
+// errReserved is a fixture sentinel that a Validate() method wraps with
+// fmt.Errorf("…: %w", errReserved); the library must preserve both the
+// wrapping message and the wrapped chain so errors.Is reaches the inner
+// sentinel.
+var errReserved = errors.New("port is reserved")
+
+type wrapValidate struct {
+	Port int `koanf:"port" koanf-validate:"required"`
+}
+
+func (w *wrapValidate) Validate() error {
+	if w.Port == 22 {
+		return fmt.Errorf("port %d is reserved by the OS: %w", w.Port, errReserved)
+	}
+	return nil
+}
+
 // Custom rule fixture
 type customRuleCfg struct {
 	Port int `koanf:"port" koanf-validate:"required,company_port"`
@@ -513,6 +655,37 @@ func TestStruct_ValidateMethod_ReturnsJoinedErrors(t *testing.T) {
 	}
 }
 
+// A Validate() method returning fmt.Errorf("…: %w", inner) must reach the
+// consumer with both the wrapping message AND the chain intact. If
+// flattenValidateError recursed unconditionally into the single-wrap Unwrap,
+// the wrapping message would be discarded and the operator would never see
+// "port 22 is reserved by the OS".
+func TestStruct_ValidateMethod_PreservesWrapContext(t *testing.T) {
+	t.Parallel()
+	cfg := &wrapValidate{Port: 22}
+	me := requireMultiError(t, koanfvalidate.Struct(cfg, koanfvalidate.Options{}))
+	fe := findByPath(me, "")
+	if fe == nil {
+		t.Fatalf("no FieldError at root path; paths=%v", pathsOf(me))
+	}
+	if fe.Tag != "invariant" {
+		t.Errorf("Tag: got %q, want invariant", fe.Tag)
+	}
+	if !errors.Is(fe, koanfvalidate.ErrInvariant) {
+		t.Error("errors.Is(fe, ErrInvariant) = false")
+	}
+	// The library MUST preserve the wrap chain so consumers can errors.Is
+	// against the inner sentinel.
+	if !errors.Is(fe, errReserved) {
+		t.Error("errors.Is(fe, errReserved) = false — wrap context discarded")
+	}
+	// The full rendered MultiError must contain the wrapping message; that's
+	// the human-readable signal a Validate() author wrote and expects to see.
+	if !strings.Contains(me.Error(), "port 22 is reserved by the OS") {
+		t.Errorf("rendered MultiError missing wrap context:\n%s", me.Error())
+	}
+}
+
 func TestStruct_ValidateMethod_NestedReceiver(t *testing.T) {
 	t.Parallel()
 	cfg := &withNestedValidate{}
@@ -547,6 +720,7 @@ func TestStruct_TagRulesPlusValidateBothReported(t *testing.T) {
 func TestStruct_CustomValidatorRule(t *testing.T) {
 	t.Parallel()
 	v := validator.New()
+	v.SetTagName("koanf-validate") // caller-supplied validators must be pre-configured
 	if err := v.RegisterValidation("company_port", func(fl validator.FieldLevel) bool {
 		p := fl.Field().Int()
 		return p >= 8000 && p <= 9000
@@ -597,6 +771,62 @@ func TestStruct_IncludeValues_DefaultOff(t *testing.T) {
 	}
 	if fe.Value != nil {
 		t.Errorf("Value: got %v, want nil (secrets must not leak by default)", fe.Value)
+	}
+}
+
+// When IncludeValues=false (the default), the validator.FieldError reachable
+// via the cause chain must not leak the failing value via .Value(). Without
+// redaction, errors.As(fe, &validator.FieldError) returns the live vfe whose
+// .Value() exposes the secret — bypassing the documented secret-safety
+// promise.
+func TestStruct_SecretSafety_ValidatorCauseIsRedacted(t *testing.T) {
+	t.Parallel()
+	const secret = "hunter2" // 7 chars, fails min=16
+	cfg := &secretCfg{Password: secret}
+	me := requireMultiError(t, koanfvalidate.Struct(cfg, koanfvalidate.Options{}))
+	fe := findByPath(me, "password")
+	if fe == nil {
+		t.Fatalf("no FieldError at password")
+	}
+
+	// High-level redaction.
+	if fe.Value != nil {
+		t.Errorf("FieldError.Value: got %v, want nil", fe.Value)
+	}
+
+	// Cause-chain redaction — the bypass vector.
+	var vfe validator.FieldError
+	if !errors.As(fe, &vfe) {
+		t.Fatal("errors.As to validator.FieldError failed — cause chain broken")
+	}
+	if v := vfe.Value(); v != nil {
+		t.Errorf("validator.FieldError.Value() through cause chain: got %v, want nil — secret leaked", v)
+	}
+	// Sanity-check the other methods still delegate (must not redact tag/namespace/etc).
+	if vfe.Tag() != "min" {
+		t.Errorf("delegated Tag: got %q, want min", vfe.Tag())
+	}
+	if vfe.Param() != "16" {
+		t.Errorf("delegated Param: got %q, want 16", vfe.Param())
+	}
+}
+
+// Opt-in path must still expose the real value through both surfaces.
+func TestStruct_SecretSafety_OptInExposesValueEverywhere(t *testing.T) {
+	t.Parallel()
+	const v = "short" // fails min=16
+	cfg := &secretCfg{Password: v}
+	me := requireMultiError(t, koanfvalidate.Struct(cfg, koanfvalidate.Options{IncludeValues: true}))
+	fe := findByPath(me, "password")
+	if fe.Value != v {
+		t.Errorf("FieldError.Value: got %v, want %q", fe.Value, v)
+	}
+	var vfe validator.FieldError
+	if !errors.As(fe, &vfe) {
+		t.Fatal("errors.As failed")
+	}
+	if got := vfe.Value(); got != v {
+		t.Errorf("validator.FieldError.Value() through cause chain: got %v, want %q", got, v)
 	}
 }
 
@@ -653,6 +883,35 @@ func TestStruct_ConcurrentSafety(t *testing.T) {
 	wg.Wait()
 }
 
+// A shared *validator.Validate passed via Options.Validator must be race-free
+// under concurrent Struct() calls. The library must not mutate the caller's
+// validator (no SetTagName, no RegisterValidation, no pool tweaking) — those
+// mutations would race against any goroutine concurrently calling
+// val.Struct(...) on the same instance.
+func TestStruct_ConcurrentSafety_SharedValidator(t *testing.T) {
+	t.Parallel()
+	v := validator.New()
+	v.SetTagName("koanf-validate")
+	if err := v.RegisterValidation("company_port", func(fl validator.FieldLevel) bool {
+		p := fl.Field().Int()
+		return p >= 8000 && p <= 9000
+	}); err != nil {
+		t.Fatalf("RegisterValidation: %v", err)
+	}
+
+	const goroutines = 50
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for range goroutines {
+		go func() {
+			defer wg.Done()
+			cfg := &customRuleCfg{Port: 8500}
+			_ = koanfvalidate.Struct(cfg, koanfvalidate.Options{Validator: v})
+		}()
+	}
+	wg.Wait()
+}
+
 // =============================================================================
 // Category 10: Error rendering
 // =============================================================================
@@ -684,6 +943,49 @@ func TestMultiError_RenderShowsAllErrors(t *testing.T) {
 	msg := err.Error()
 	if !strings.Contains(msg, "name: required") {
 		t.Errorf("rendered message missing 'name: required':\n%s", msg)
+	}
+}
+
+// =============================================================================
+// Category 11: Sentinel traversal via errors.Is on MultiError
+// =============================================================================
+
+// Covers the documented errors.Is(koanfvalidate.Struct(...), Sentinel)
+// contract. MultiError.Unwrap returns []*FieldError; each *FieldError unwraps
+// to {sentinel, cause}. errors.Is must walk both layers to reach the sentinel.
+func TestMultiError_ErrorsIs_TraversesToSentinels(t *testing.T) {
+	t.Parallel()
+	type cfg struct {
+		Name  string `koanf:"name"  koanf-validate:"required"`    // ErrRequired
+		Port  int    `koanf:"port"  koanf-validate:"min=1"`       // ErrOutOfRange
+		Mode  string `koanf:"mode"  koanf-validate:"oneof=a b c"` // ErrNotInSet
+		Email string `koanf:"email" koanf-validate:"email"`       // ErrBadFormat
+	}
+	err := koanfvalidate.Struct(&cfg{Email: "not-an-email"}, koanfvalidate.Options{})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	cases := []struct {
+		name     string
+		sentinel error
+		want     bool
+	}{
+		{"required matches", koanfvalidate.ErrRequired, true},
+		{"out_of_range matches", koanfvalidate.ErrOutOfRange, true},
+		{"not_in_set matches", koanfvalidate.ErrNotInSet, true},
+		{"bad_format matches", koanfvalidate.ErrBadFormat, true},
+		{"field_mismatch absent", koanfvalidate.ErrFieldMismatch, false},
+		{"invariant absent", koanfvalidate.ErrInvariant, false},
+		{"cyclic_type absent", koanfvalidate.ErrCyclicType, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := errors.Is(err, tc.sentinel); got != tc.want {
+				t.Errorf("errors.Is(err, %v) = %v, want %v", tc.sentinel, got, tc.want)
+			}
+		})
 	}
 }
 
