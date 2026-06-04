@@ -49,6 +49,14 @@ var ErrFieldMismatch = errors.New("koanfvalidate: field constraint not satisfied
 // to discriminate user-authored invariant failures from tag-rule failures.
 var ErrInvariant = errors.New("koanfvalidate: invariant violated")
 
+// ErrPanic is wrapped into the cause chain when a user's Validate() method
+// panics. The library recovers, converts the panic into a FieldError, and
+// returns normally so a buggy validation method never crashes the host.
+// errors.Is(err, ErrInvariant) and errors.Is(err, ErrPanic) both match the
+// resulting FieldError — the first answers "did Validate() reject?", the
+// second answers "did Validate() crash?".
+var ErrPanic = errors.New("koanfvalidate: Validate() method panicked")
+
 // ErrPathUnresolved is added to a FieldError's Unwrap chain whenever the
 // underlying validator/v10 namespace could not be mapped to a koanf path.
 // This happens for validator features the walker does not model: dive,

@@ -281,7 +281,21 @@ func hasValidateMethod(t reflect.Type) bool {
 // produced. Tries pointer receiver first (more permissive — covers value
 // receiver methods too via Go's promoted method set). Returns nil if no
 // Validate method is callable on either form.
-func callValidate(receiver reflect.Value) error {
+//
+// Any panic that escapes the user's Validate() method is recovered and
+// converted into an error wrapping ErrPanic, so a buggy Validate() never
+// crashes the host process.
+func callValidate(receiver reflect.Value) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%w: %v", ErrPanic, r)
+		}
+	}()
+
+	if !receiver.IsValid() {
+		return nil
+	}
+
 	var fn reflect.Value
 	if receiver.CanAddr() {
 		fn = receiver.Addr().MethodByName("Validate")

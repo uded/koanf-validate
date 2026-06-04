@@ -237,6 +237,41 @@ func TestStruct_NormalPath_DoesNotHaveErrPathUnresolved(t *testing.T) {
 	}
 }
 
+// A Validate() method that panics must not crash the host process; the
+// library recovers and surfaces the panic as a FieldError whose chain
+// matches both ErrPanic and ErrInvariant.
+type panicValidate struct {
+	X int `koanf:"x"`
+}
+
+func (p *panicValidate) Validate() error {
+	panic("intentional panic for test")
+}
+
+func TestStruct_ValidatePanic_RecoveredAsFieldError(t *testing.T) {
+	t.Parallel()
+	cfg := &panicValidate{}
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Struct must recover Validate() panics, but one escaped: %v", r)
+		}
+	}()
+	me := requireMultiError(t, koanfvalidate.Struct(cfg, koanfvalidate.Options{}))
+	fe := findByPath(me, "")
+	if fe == nil {
+		t.Fatalf("no FieldError at root; got %v", pathsOf(me))
+	}
+	if !errors.Is(fe, koanfvalidate.ErrPanic) {
+		t.Error("errors.Is(fe, ErrPanic) should be true")
+	}
+	if !errors.Is(fe, koanfvalidate.ErrInvariant) {
+		t.Error("errors.Is(fe, ErrInvariant) should be true — panics are still Validate() failures")
+	}
+	if !strings.Contains(me.Error(), "intentional panic for test") {
+		t.Errorf("rendered MultiError missing panic message:\n%s", me.Error())
+	}
+}
+
 // errReserved is a fixture sentinel that a Validate() method wraps with
 // fmt.Errorf("…: %w", errReserved); the library must preserve both the
 // wrapping message and the wrapped chain so errors.Is reaches the inner
