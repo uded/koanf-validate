@@ -151,7 +151,7 @@ func walkType(rootType reflect.Type, pathTag, delim string) (*walkResult, error)
 		w.visitorRecipes = append(w.visitorRecipes, visitorRecipe{koanfPath: ""})
 	}
 
-	if err := w.walkType(rootType, rootGoPath, "", nil); err != nil {
+	if err := w.walkType(rootType, rootGoPath, "", nil, map[string]int{}); err != nil {
 		return nil, err
 	}
 
@@ -176,8 +176,11 @@ type walker struct {
 
 // walkType recurses through t accumulating path mappings, skip prefixes, and
 // visitor recipes. parentSteps is the field-step chain from the root to t;
-// child recipes extend it by one fieldStep.
-func (w *walker) walkType(t reflect.Type, goPath, koanfPath string, parentSteps []fieldStep) error {
+// child recipes extend it by one fieldStep. siblingSegments tracks the koanf
+// segments already claimed at the current namespace level so two fields
+// claiming the same segment can be reported as ErrInvalidConfig instead of
+// silently overwriting each other in the path map.
+func (w *walker) walkType(t reflect.Type, goPath, koanfPath string, parentSteps []fieldStep, siblingSegments map[string]int) error {
 	// Cycle guard. Two values of the same Go type share an identical
 	// reflect.Type, so this catches both self-reference (Node.Next *Node)
 	// and mutual recursion (A→B→A).
@@ -202,6 +205,23 @@ func (w *walker) walkType(t reflect.Type, goPath, koanfPath string, parentSteps 
 			// node. Record the prefix so the translator can drop them.
 			w.skippedPrefixes = append(w.skippedPrefixes, childGoPath)
 			continue
+		}
+
+		// Determine the koanf segment this field claims at the current
+		// namespace level. Anonymous embedded structs without an explicit
+		// tag squash up into the parent's namespace and claim no segment
+		// of their own — their fields contribute later when we recurse.
+		squashed := f.Anonymous && ptag == ""
+		if !squashed {
+			segment := ptag
+			if segment == "" {
+				segment = f.Name
+			}
+			if prior, taken := siblingSegments[segment]; taken {
+				return fmt.Errorf("%w: koanf segment %q is claimed by two sibling fields (%s and %s) at the same level",
+					ErrInvalidConfig, segment, t.Field(prior).Name, f.Name)
+			}
+			siblingSegments[segment] = i
 		}
 
 		childKoanfPath := w.childKoanfPath(koanfPath, f, ptag)
@@ -235,7 +255,15 @@ func (w *walker) walkType(t reflect.Type, goPath, koanfPath string, parentSteps 
 			})
 		}
 
-		if err := w.walkType(ft, childGoPath, childKoanfPath, childSteps); err != nil {
+		// Squashed anonymous embedded structs share the parent's sibling
+		// namespace so their children collide with the parent's siblings.
+		// Named struct fields start a fresh namespace for their children.
+		subSegments := siblingSegments
+		if !squashed {
+			subSegments = map[string]int{}
+		}
+
+		if err := w.walkType(ft, childGoPath, childKoanfPath, childSteps, subSegments); err != nil {
 			return err
 		}
 	}

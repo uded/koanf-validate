@@ -237,6 +237,42 @@ func TestStruct_NormalPath_DoesNotHaveErrPathUnresolved(t *testing.T) {
 	}
 }
 
+// Two siblings claiming the same koanf segment is a developer error — they
+// silently aliased the same config key. The walker must detect this and
+// return ErrInvalidConfig instead of letting the path map be quietly
+// overwritten.
+type siblingCollisionCfg struct {
+	A string `koanf:"host" koanf-validate:"required"`
+	B string `koanf:"host" koanf-validate:"required"`
+}
+
+func TestStruct_SiblingTagCollision_ReturnsErrInvalidConfig(t *testing.T) {
+	t.Parallel()
+	err := koanfvalidate.Struct(&siblingCollisionCfg{}, koanfvalidate.Options{})
+	if !errors.Is(err, koanfvalidate.ErrInvalidConfig) {
+		t.Fatalf("expected ErrInvalidConfig, got %v", err)
+	}
+}
+
+// Anonymous-embedded structs squash up into the parent namespace, so a tag
+// in the parent that collides with one in the embedded struct must also be
+// detected.
+type embeddedCollisionBase struct {
+	ID string `koanf:"id" koanf-validate:"required"`
+}
+type embeddedCollisionCfg struct {
+	embeddedCollisionBase
+	ID string `koanf:"id" koanf-validate:"required"` // collides with embedded
+}
+
+func TestStruct_SquashedEmbeddedCollision_ReturnsErrInvalidConfig(t *testing.T) {
+	t.Parallel()
+	err := koanfvalidate.Struct(&embeddedCollisionCfg{}, koanfvalidate.Options{})
+	if !errors.Is(err, koanfvalidate.ErrInvalidConfig) {
+		t.Fatalf("expected ErrInvalidConfig from embedded-squash collision, got %v", err)
+	}
+}
+
 // A Validate() method that panics must not crash the host process; the
 // library recovers and surfaces the panic as a FieldError whose chain
 // matches both ErrPanic and ErrInvariant.
