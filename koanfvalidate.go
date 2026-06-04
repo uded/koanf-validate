@@ -23,7 +23,6 @@ package koanfvalidate
 import (
 	"errors"
 	"sort"
-	"strings"
 	"sync"
 
 	"github.com/go-playground/validator/v10"
@@ -126,10 +125,12 @@ type Options struct {
 //   - a plain error — attached to the receiver's koanf path with Tag set to
 //     "invariant" and the ErrInvariant sentinel.
 //   - a *FieldError — used as-is (lets the method pinpoint a specific child
-//     field or carry a custom Tag). Paths and cross-field Params are
-//     interpreted relative to the receiver's koanf path: writing
-//     {Path: "port"} from a Validate method on a struct mounted at "server"
-//     produces a FieldError keyed at "server.port".
+//     field or carry a custom Tag). Path is always interpreted as relative
+//     to the receiver's koanf path: writing {Path: "port"} from a Validate
+//     method on a struct mounted at "server" produces a FieldError keyed at
+//     "server.port". Param is rebased the same way ONLY when Tag names a
+//     known cross-field rule (gtefield, eqfield, …); literal scalar Params
+//     (e.g. "10") survive verbatim regardless of the receiver path.
 //   - errors.Join(...) of any combination of the above — each leaf is added
 //     to the returned MultiError.
 type StructValidator interface {
@@ -270,14 +271,13 @@ func flattenValidateError(err error, receiverPath, delim string) []*FieldError {
 
 // rebaseFieldError produces a copy of fe with Path and Param interpreted
 // relative to the Validate() method's receiver:
-//   - empty Path → receiverPath.
-//   - Path containing the delim is treated as already-absolute and left alone.
-//   - Path without the delim is prefixed with receiverPath.
-//
-// Same rule for Param. The heuristic is conservative: callers who want to
-// emit an absolute path can do so by including the delim, and the common
-// case ({Path: "port"} from a Validate on a struct at "server") becomes
-// "server.port" without ceremony.
+//   - Path is always relative. An empty Path becomes receiverPath; a non-
+//     empty Path is unconditionally prepended with receiverPath+delim so a
+//     literal dot inside Path is preserved rather than treated as a path
+//     separator.
+//   - Param is only rebased when Tag names a known cross-field rule
+//     (gtefield, eqfield, …). Literal scalar Params such as "10" from
+//     min=10 survive verbatim and never collide with the delim.
 //
 // Tag, sentinel, and Value are filled in with invariant defaults when the
 // user didn't supply them.
@@ -290,20 +290,21 @@ func rebaseFieldError(fe *FieldError, receiverPath, delim string) *FieldError {
 		out.sentinel = ErrInvariant
 	}
 	if receiverPath != "" {
-		out.Path = prefixIfRelative(out.Path, receiverPath, delim)
-		out.Param = prefixIfRelative(out.Param, receiverPath, delim)
+		out.Path = prefixPath(out.Path, receiverPath, delim)
+		if _, isCross := crossFieldTags[out.Tag]; isCross {
+			out.Param = prefixPath(out.Param, receiverPath, delim)
+		}
 	}
 	return &out
 }
 
-// prefixIfRelative prepends prefix + delim to s when s does not already
-// contain delim. An empty s becomes prefix on its own.
-func prefixIfRelative(s, prefix, delim string) string {
+// prefixPath joins a relative path s to its receiver. An empty s becomes the
+// receiver itself; a non-empty s is unconditionally prepended with
+// receiver+delim. There is no absolute-path detection — every path returned
+// from a Validate() method is interpreted as relative to the receiver.
+func prefixPath(s, receiver, delim string) string {
 	if s == "" {
-		return prefix
+		return receiver
 	}
-	if strings.Contains(s, delim) {
-		return s
-	}
-	return prefix + delim + s
+	return receiver + delim + s
 }

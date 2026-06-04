@@ -237,6 +237,60 @@ func TestStruct_NormalPath_DoesNotHaveErrPathUnresolved(t *testing.T) {
 	}
 }
 
+// A Validate() method returning a Path that contains the delim is still
+// interpreted as relative to the receiver — the library does not attempt
+// to detect "absolute" paths via a leading delim or by substring search.
+// This preserves literal-dot path segments and keeps the rebasing rule
+// uniform.
+type alwaysRelativePathInner struct {
+	X int `koanf:"x"`
+}
+
+func (a *alwaysRelativePathInner) Validate() error {
+	return &koanfvalidate.FieldError{Path: "child.field", Tag: "custom_check"}
+}
+
+type alwaysRelativeCfg struct {
+	Server alwaysRelativePathInner `koanf:"server"`
+}
+
+func TestStruct_ValidatePath_AlwaysRelativeEvenWithDelim(t *testing.T) {
+	t.Parallel()
+	cfg := &alwaysRelativeCfg{}
+	me := requireMultiError(t, koanfvalidate.Struct(cfg, koanfvalidate.Options{}))
+	if findByPath(me, "server.child.field") == nil {
+		t.Fatalf("expected server.child.field (relative rebase), got %v", pathsOf(me))
+	}
+}
+
+// Param is only rebased when Tag names a cross-field rule. Literal scalar
+// Params (e.g. "10" from min=10, or anything a user-defined Tag carries)
+// must not be polluted with the receiver path.
+type literalParamInner struct {
+	X int `koanf:"x"`
+}
+
+func (l *literalParamInner) Validate() error {
+	return &koanfvalidate.FieldError{Path: "x", Tag: "min_custom", Param: "10"}
+}
+
+type literalParamCfg struct {
+	Server literalParamInner `koanf:"server"`
+}
+
+func TestStruct_ValidateParam_LiteralPreservedForNonCrossFieldTags(t *testing.T) {
+	t.Parallel()
+	cfg := &literalParamCfg{}
+	me := requireMultiError(t, koanfvalidate.Struct(cfg, koanfvalidate.Options{}))
+	fe := findByPath(me, "server.x")
+	if fe == nil {
+		t.Fatalf("expected server.x, got %v", pathsOf(me))
+	}
+	if fe.Param != "10" {
+		t.Errorf("Param: got %q, want %q (literal, no rebase for non-cross-field tags)", fe.Param, "10")
+	}
+}
+
 // Options.Delim threads through walker path joining, validator-error
 // translation, and Validate()-error rebasing. Using "/" produces koanf
 // paths like "server/port" everywhere — including when a Validate()
