@@ -43,6 +43,8 @@ go get github.com/uded/koanf-validate
 
 Requires Go 1.25+ (matches the MSRV of `validator/v10`). The only direct dependency is `github.com/go-playground/validator/v10`.
 
+> **Transitive footprint note.** `validator/v10` pulls `github.com/gabriel-vasile/mimetype` (~2 MB) as a transitive dependency for its `file` rules. The full set is `mimetype`, `go-playground/locales`, `go-playground/universal-translator`, `leodido/go-urn`, and the standard `golang.org/x/{crypto,sys,text}` chain — your consumer binary inherits all of them whether or not your config uses the rules that require them. This is upstream and outside our control; if it matters for your binary size, raise it with `validator/v10`.
+
 ## Usage
 
 ```go
