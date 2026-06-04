@@ -1,0 +1,43 @@
+# Go build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Coverage / profiling
+coverage.txt
+coverage.html
+*.prof
+
+# Build output
+/bin/
+/dist/
+
+# Editors / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Agent tooling — never commit
+CLAUDE.md
+GEMINI.md
+AGENTS.md
+.claude/
+.serena/
+.remember/
+.aider*
+docs/superpowers/
+
+# Local design scratch
+DESIGN.md
+
+# Agent tooling allowlist (Claude Code / similar)
+tools.yaml
