@@ -343,9 +343,23 @@ func callValidate(receiver reflect.Value) (err error) {
 	return out[0].Interface().(error)
 }
 
+// opaqueLeafCache memoizes isOpaqueLeaf decisions per reflect.Type. Leaf
+// status is a pure function of the type's method set, so cached entries
+// remain valid for the lifetime of the process.
+var opaqueLeafCache sync.Map
+
 // isOpaqueLeaf reports whether t should be treated as a leaf during the walk.
 // Currently: encoding.TextUnmarshaler implementations and time.Duration.
 func isOpaqueLeaf(t reflect.Type) bool {
+	if cached, ok := opaqueLeafCache.Load(t); ok {
+		return cached.(bool)
+	}
+	result := computeIsOpaqueLeaf(t)
+	opaqueLeafCache.Store(t, result)
+	return result
+}
+
+func computeIsOpaqueLeaf(t reflect.Type) bool {
 	if t == durationType {
 		return true
 	}
