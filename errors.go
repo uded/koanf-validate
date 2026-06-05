@@ -195,6 +195,20 @@ func (e *FieldError) Unwrap() []error {
 // MultiError joins per-field validation failures into one error suitable for
 // returning from Struct. Errors are deterministically ordered (by Path, then
 // Tag) so test output and logs remain stable across runs.
+//
+// The Errors slice is part of the public contract: read it, range over it,
+// pass it to a structured logger. Two invariants apply post-construction:
+//
+//   - Order is sorted by (Path, Tag) ascending. Tests, log dedup, and
+//     snapshot comparison all rely on this. Re-sorting or shuffling the
+//     slice produces a MultiError that no longer satisfies the contract.
+//   - Length is fixed. Unwrap caches a []error view of Errors on its first
+//     call (so errors.Is / errors.As traversal is allocation-free for
+//     subsequent calls); appending to or truncating Errors after the first
+//     Unwrap leaves the cache stale.
+//
+// Treat the slice as immutable. Callers that need a mutable copy should
+// allocate one explicitly: append([]*FieldError(nil), me.Errors...).
 type MultiError struct {
 	Errors []*FieldError
 
