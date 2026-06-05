@@ -4,7 +4,7 @@ All notable changes to `koanf-validate` are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] — 2026-06-05
 
 ### Changed
 - **Restored MSRV to Go 1.23.0 to match koanf v2.** `validator/v10` is pinned
@@ -75,6 +75,16 @@ All notable changes to `koanf-validate` are documented here. Format follows
   instead of silently overwriting the path map.
 - `ErrCyclicType` messages now include the koanf path where the cycle was
   triggered, not just the offending Go type name.
+- Struct nesting deeper than 64 levels now returns `ErrInvalidConfig`
+  naming the offending koanf path, defending against pathological inputs
+  that would otherwise drive the walker into stack exhaustion.
+- Typed-nil errors returned from `Validate()` (e.g. `var e *MyErr;
+  return e` where the concrete type is non-nil but the value is) are
+  now normalized as "no failure" instead of surfacing as a meaningless
+  invariant error pointing at `<nil>`.
+- `flattenValidateError` recursion is bounded at depth 64; adversarial
+  `errors.Join` chains returned from `Validate()` surface as a single
+  truncation invariant rather than blowing the stack.
 
 ### Performance
 - Walker output memoized via `sync.Map` keyed on
@@ -84,6 +94,17 @@ All notable changes to `koanf-validate` are documented here. Format follows
   `Options.Validator` is nil AND `Options.ValidateTag` is the default.
   Preserves validator/v10's per-type reflection cache across calls.
 - `isOpaqueLeaf` decisions cached per `reflect.Type`.
+- Visitor recipes cache the resolved `Validate()` method index so
+  invocation avoids a method-by-name lookup per Struct call.
+- `MultiError.Unwrap` returns a cached `[]error` view of `Errors` via
+  `sync.Once`, amortizing the allocation across repeated `errors.Is` /
+  `errors.As` traversal.
+- `slices.SortStableFunc` + `cmp.Compare` replace the prior
+  `sort.SliceStable` + closure capture, removing the per-element
+  function-call indirection on the hot ordering path.
+- `flattenValidateError` pre-sizes its multi-error output slice using
+  the child count as a hint, eliminating slice growth in the common
+  `errors.Join` shape.
 
 ## [0.1.0] — 2026-06-04
 
@@ -96,5 +117,6 @@ anonymous-embedded squash, `koanf:"-"` skip, custom rule passthrough via
 See the [v0.1.0 release notes](https://github.com/uded/koanf-validate/releases/tag/v0.1.0)
 for the full feature list.
 
-[Unreleased]: https://github.com/uded/koanf-validate/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/uded/koanf-validate/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/uded/koanf-validate/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/uded/koanf-validate/releases/tag/v0.1.0
