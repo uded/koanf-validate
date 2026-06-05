@@ -6,6 +6,18 @@ All notable changes to `koanf-validate` are documented here. Format follows
 
 ## [Unreleased]
 
+### Changed
+- **Restored MSRV to Go 1.23.0 to match koanf v2.** `validator/v10` is pinned
+  to `v10.27.0` (the last release supporting Go ≤ 1.23) and the
+  `golang.org/x/{crypto,sys,text}` transitives are pinned to the last
+  versions that compile on Go 1.23. Without these pins, the latest
+  `validator/v10` line would silently force MSRV 1.25 and lock out any
+  koanf user still on Go 1.23 or 1.24. The pins are minimums — consumers
+  on newer Go whose other dependencies pull in newer `x/*` versions get
+  those upgraded versions through MVS. Maintainer policy: bump together
+  with koanf when [knadh/koanf](https://github.com/knadh/koanf) raises its
+  own `go` directive.
+
 ### Added
 - `ErrPathUnresolved` sentinel, appended to `FieldError.Unwrap` whenever the
   walker cannot map a validator namespace to a koanf path (validator features

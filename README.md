@@ -8,6 +8,35 @@ Validate [koanf](https://github.com/knadh/koanf)-populated structs with errors k
 [![Release](https://img.shields.io/github/v/release/uded/koanf-validate)](https://github.com/uded/koanf-validate/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/uded/koanf-validate)](./LICENSE)
 
+> ## ⚠️ Dependency pinning notice — read before adopting
+>
+> This library **deliberately pins `validator/v10` to `v10.27.0`** and its
+> `golang.org/x/{crypto,sys,text}` transitives to the versions that compile on
+> Go 1.23, so koanf-validate stays usable on **every Go release koanf itself
+> supports**.
+>
+> **Why the pin exists**
+>
+> koanf v2 advertises Go 1.23+ as its MSRV. Latest `validator/v10` (v10.30.x)
+> and its transitive `x/*` deps quietly require Go 1.25, which would silently
+> lock out any koanf user still on Go 1.23 or 1.24 from adopting this
+> companion library. Pinning is the only way to honor the koanf-companion
+> framing this library is named after.
+>
+> **What it means for you**
+>
+> - **You get a working library on every Go version koanf supports** — Go 1.23, 1.24, 1.25, 1.26.
+> - The pin is a *minimum*, not a ceiling. Go's Minimum Version Selection (MVS) picks the highest required version across your full dependency tree. If your application pulls in a newer `x/crypto`, `x/sys`, or `x/text` through any other dependency, your build resolves to that newer version — we don't cap you.
+> - **You can opt up to the latest `validator/v10` yourself** at any time:
+>   ```bash
+>   go get github.com/go-playground/validator/v10@latest
+>   ```
+>   Our public usage is API-compatible across the v10 line; the only reason we don't take that bump in our own `go.mod` is the MSRV constraint above.
+>
+> **Maintainer policy**
+>
+> These pins track koanf's MSRV. When [knadh/koanf](https://github.com/knadh/koanf) raises the `go` directive in its own `go.mod`, we raise ours and drop the pins in the same release. Until then, `.github/dependabot.yml` has explicit ignore rules so Dependabot doesn't keep proposing bumps we'd have to reject.
+
 ## Related projects
 
 This validator composes with two sibling packages in the same family:
@@ -41,7 +70,7 @@ The same translation applies to `gtefield`/`eqfield`/etc. cross-field references
 go get github.com/uded/koanf-validate
 ```
 
-Requires Go 1.25+ (matches the MSRV of `validator/v10`). The only direct dependency is `github.com/go-playground/validator/v10`.
+Requires Go 1.23+ (matches koanf v2's MSRV). The only direct dependency is `github.com/go-playground/validator/v10`. See the [dependency-pinning notice](#%EF%B8%8F-dependency-pinning-notice--read-before-adopting) above for the version policy.
 
 > **Transitive footprint note.** `validator/v10` pulls `github.com/gabriel-vasile/mimetype` (~2 MB) as a transitive dependency for its `file` rules. The full set is `mimetype`, `go-playground/locales`, `go-playground/universal-translator`, `leodido/go-urn`, and the standard `golang.org/x/{crypto,sys,text}` chain — your consumer binary inherits all of them whether or not your config uses the rules that require them. This is upstream and outside our control; if it matters for your binary size, raise it with `validator/v10`.
 
