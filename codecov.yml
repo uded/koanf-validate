@@ -1,0 +1,44 @@
+# Codecov configuration — explicit thresholds so the check produces a
+# meaningful pass/fail signal instead of relying on Codecov's silent
+# defaults (which shift over time as the platform evolves).
+
+codecov:
+  require_ci_to_pass: true
+  notify:
+    wait_for_ci: true
+
+coverage:
+  precision: 1
+  round: down
+  # Below 70% renders red, above 90% renders green; tunes the badge colour
+  # without affecting pass/fail.
+  range: "70...100"
+  status:
+    project:
+      default:
+        # "auto" anchors the target to the base branch's coverage — a
+        # ratchet that prevents silent regression while accepting upward
+        # drift. The 1pp threshold absorbs trivial refactors that
+        # rearrange uncovered lines without changing the contract.
+        target: auto
+        threshold: 1%
+        informational: false
+    patch:
+      default:
+        # New/changed lines must be 80% covered. This is the lever that
+        # catches "added a feature without a test" — independent of how
+        # the rest of the file looks today.
+        target: 80%
+        threshold: 0%
+        informational: false
+
+comment:
+  layout: "reach, diff, flags, files"
+  behavior: default
+  require_changes: false
+
+ignore:
+  # Benchmarks exercise hot paths but assert nothing; counting them as
+  # covered code skews the project-level metric upward without proving
+  # anything about correctness.
+  - "bench_test.go"
