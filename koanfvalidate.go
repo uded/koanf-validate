@@ -246,8 +246,13 @@ func flattenValidateError(err error, receiverPath, delim string) []*FieldError {
 	}
 
 	if u, ok := err.(interface{ Unwrap() []error }); ok {
-		var out []*FieldError
-		for _, sub := range u.Unwrap() {
+		children := u.Unwrap()
+		// Pre-size the destination using the multi-error's child count as a
+		// hint. Each child may produce more than one FieldError (nested
+		// errors.Join, *FieldError-with-Param), but the hint keeps the
+		// common case allocation-free past initial growth.
+		out := make([]*FieldError, 0, len(children))
+		for _, sub := range children {
 			out = append(out, flattenValidateError(sub, receiverPath, delim)...)
 		}
 		return out
