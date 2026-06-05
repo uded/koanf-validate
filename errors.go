@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 )
 
 // invariantTag is the FieldError.Tag value used for failures produced by a
@@ -196,6 +197,12 @@ func (e *FieldError) Unwrap() []error {
 // Tag) so test output and logs remain stable across runs.
 type MultiError struct {
 	Errors []*FieldError
+
+	// unwrapped is the cached []error view of Errors. errors.Is / errors.As
+	// walk via Unwrap repeatedly, so lazy-initialising the slice once
+	// amortises the allocation across the lifetime of the MultiError.
+	unwrapOnce sync.Once
+	unwrapped  []error
 }
 
 // Error renders the MultiError as a newline-joined list of FieldError strings,
@@ -216,12 +223,20 @@ func (m *MultiError) Error() string {
 // Unwrap exposes the individual FieldErrors for errors.Is/errors.As walking.
 // errors.Is(multi, ErrRequired) returns true iff any contained FieldError
 // has ErrRequired as its sentinel.
+//
+// The returned slice is lazily populated on first call and reused for
+// subsequent calls; callers MUST treat it as read-only. Mutations to the
+// exported Errors field after the first Unwrap will not be reflected in
+// the cached slice — see the type's godoc for the invariant.
 func (m *MultiError) Unwrap() []error {
-	out := make([]error, len(m.Errors))
-	for i, fe := range m.Errors {
-		out[i] = fe
-	}
-	return out
+	m.unwrapOnce.Do(func() {
+		out := make([]error, len(m.Errors))
+		for i, fe := range m.Errors {
+			out[i] = fe
+		}
+		m.unwrapped = out
+	})
+	return m.unwrapped
 }
 
 // LogValue implements slog.LogValuer so a MultiError can be passed straight
