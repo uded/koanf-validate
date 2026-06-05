@@ -201,7 +201,7 @@ func Struct(cfg any, opts Options) error {
 			// sub-config. Don't invent a zero value and call Validate() on it.
 			continue
 		}
-		userErr := callValidate(receiver)
+		userErr := callValidate(receiver, recipe.methodIndex)
 		if userErr == nil {
 			continue
 		}

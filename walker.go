@@ -38,6 +38,12 @@ type walkResult struct {
 type visitorRecipe struct {
 	koanfPath string
 	steps     []fieldStep
+
+	// methodIndex is the index of the Validate method in the receiver's
+	// pointer-type method set, resolved once at walk time so callValidate
+	// dispatches via Value.Method(idx) instead of paying for a string-keyed
+	// MethodByName lookup on every visitor invocation.
+	methodIndex int
 }
 
 // fieldStep is one hop along a recipe: pick a field by index, and (if it is
@@ -145,7 +151,11 @@ func walkType(rootType reflect.Type, pathTag, delim string) (*walkResult, error)
 		w.paths[rootGoPath] = ""
 	}
 	if hasValidate(rootType) {
-		w.visitorRecipes = append(w.visitorRecipes, visitorRecipe{koanfPath: ""})
+		m, _ := reflect.PointerTo(rootType).MethodByName("Validate")
+		w.visitorRecipes = append(w.visitorRecipes, visitorRecipe{
+			koanfPath:   "",
+			methodIndex: m.Index,
+		})
 	}
 
 	if err := w.walkType(rootType, rootGoPath, "", nil, map[string]int{}); err != nil {
@@ -251,9 +261,11 @@ func (w *walker) walkType(t reflect.Type, goPath, koanfPath string, parentSteps 
 		childSteps := append(append([]fieldStep(nil), parentSteps...), fieldStep{index: i, deref: isPointer})
 
 		if hasValidate(ft) {
+			m, _ := reflect.PointerTo(ft).MethodByName("Validate")
 			w.visitorRecipes = append(w.visitorRecipes, visitorRecipe{
-				koanfPath: childKoanfPath,
-				steps:     childSteps,
+				koanfPath:   childKoanfPath,
+				steps:       childSteps,
+				methodIndex: m.Index,
 			})
 		}
 
@@ -307,32 +319,25 @@ func hasValidateMethod(t reflect.Type) bool {
 	return mt.NumIn() == 1 && mt.NumOut() == 1 && mt.Out(0) == errorType
 }
 
-// callValidate invokes Validate() on receiver and returns whatever error it
-// produced. Tries pointer receiver first (more permissive — covers value
-// receiver methods too via Go's promoted method set). Returns nil if no
-// Validate method is callable on either form.
+// callValidate invokes Validate() on receiver using the method index the
+// walker captured at walk time. The pointer-type method set is a superset of
+// the value-type set, so dispatching via receiver.Addr().Method(idx) covers
+// both pointer- and value-receiver Validate implementations.
 //
 // Any panic that escapes the user's Validate() method is recovered and
 // converted into an error wrapping ErrPanic, so a buggy Validate() never
 // crashes the host process.
-func callValidate(receiver reflect.Value) (err error) {
+func callValidate(receiver reflect.Value, methodIndex int) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("%w: %v", ErrPanic, r)
 		}
 	}()
 
-	if !receiver.IsValid() {
+	if !receiver.IsValid() || !receiver.CanAddr() {
 		return nil
 	}
-
-	var fn reflect.Value
-	if receiver.CanAddr() {
-		fn = receiver.Addr().MethodByName("Validate")
-	}
-	if !fn.IsValid() {
-		fn = receiver.MethodByName("Validate")
-	}
+	fn := receiver.Addr().Method(methodIndex)
 	if !fn.IsValid() {
 		return nil
 	}
