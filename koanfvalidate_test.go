@@ -512,6 +512,32 @@ func TestStruct_SquashedEmbeddedCollision_ReturnsErrInvalidConfig(t *testing.T) 
 	}
 }
 
+// A Validate() method that returns a typed-nil ((*MyErr)(nil) wrapped in an
+// error interface) must be treated as "no failure". The Go gotcha: the
+// interface compares != nil even though the underlying pointer is nil, so
+// without normalisation the library would surface a meaningless invariant
+// error pointing at <nil>.
+type typedNilErr struct{ msg string }
+
+func (e *typedNilErr) Error() string { return e.msg }
+
+type withTypedNilValidate struct {
+	OK bool `koanf:"ok"`
+}
+
+func (v *withTypedNilValidate) Validate() error {
+	var e *typedNilErr // typed-nil: concrete type non-nil, value nil
+	return e
+}
+
+func TestStruct_TypedNilFromValidate_NormalisedAsNoError(t *testing.T) {
+	t.Parallel()
+	cfg := &withTypedNilValidate{}
+	if err := koanfvalidate.Struct(cfg, koanfvalidate.Options{}); err != nil {
+		t.Errorf("typed-nil from Validate must be normalised to no error; got %v", err)
+	}
+}
+
 // A Validate() method that panics must not crash the host process; the
 // library recovers and surfaces the panic as a FieldError whose chain
 // matches both ErrPanic and ErrInvariant.

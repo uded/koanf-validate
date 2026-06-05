@@ -345,7 +345,16 @@ func callValidate(receiver reflect.Value, methodIndex int) (err error) {
 	if out[0].IsNil() {
 		return nil
 	}
-	return out[0].Interface().(error)
+	got := out[0].Interface().(error)
+	// Normalise typed-nil: a user that writes `var e *MyErr; return e`
+	// returns an interface whose concrete type is non-nil but whose value
+	// is a nil pointer. The interface compares != nil, so without this
+	// check it would surface as an invariant error pointing at a useless
+	// "<nil>" string.
+	if v := reflect.ValueOf(got); v.Kind() == reflect.Pointer && v.IsNil() {
+		return nil
+	}
+	return got
 }
 
 // opaqueLeafCache memoizes isOpaqueLeaf decisions per reflect.Type. Leaf
