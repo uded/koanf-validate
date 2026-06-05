@@ -512,6 +512,35 @@ func TestStruct_SquashedEmbeddedCollision_ReturnsErrInvalidConfig(t *testing.T) 
 	}
 }
 
+// A struct nested deeper than the walker's depth cap must return
+// ErrInvalidConfig naming the offending koanf path, not a stack overflow.
+// reflect.StructOf builds a fresh type at each level so the cycle guard
+// (which compares by reflect.Type identity) is not what trips the limit.
+func TestStruct_DepthExceeded_ReturnsErrInvalidConfig(t *testing.T) {
+	t.Parallel()
+	build := func(depth int) reflect.Type {
+		// Innermost leaf is a struct with a scalar so validator/v10 has
+		// something to traverse if the walker permitted descent.
+		cur := reflect.TypeFor[struct {
+			X int `koanf:"x"`
+		}]()
+		for range depth {
+			cur = reflect.StructOf([]reflect.StructField{{
+				Name: "Down",
+				Type: cur,
+				Tag:  `koanf:"down"`,
+			}})
+		}
+		return cur
+	}
+	deep := build(80) // > maxStructDepth (64)
+	cfg := reflect.New(deep).Interface()
+	err := koanfvalidate.Struct(cfg, koanfvalidate.Options{})
+	if !errors.Is(err, koanfvalidate.ErrInvalidConfig) {
+		t.Fatalf("expected ErrInvalidConfig from depth excess; got %v", err)
+	}
+}
+
 // A Validate() method that returns a typed-nil ((*MyErr)(nil) wrapped in an
 // error interface) must be treated as "no failure". The Go gotcha: the
 // interface compares != nil even though the underlying pointer is nil, so

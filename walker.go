@@ -75,6 +75,13 @@ func (r visitorRecipe) resolve(rootValue reflect.Value) (reflect.Value, bool) {
 	return cur, true
 }
 
+// maxStructDepth bounds how deeply the walker descends into nested struct
+// types. Cycle detection already catches recursive types, but a generated
+// or adversarial config schema could still be deeply but finitely nested.
+// Hitting the cap returns ErrInvalidConfig naming the koanf path at which
+// the walker stopped, so the failure is loud and contained.
+const maxStructDepth = 64
+
 // errorType is cached so hasValidate doesn't allocate a TypeFor[error] on
 // every check.
 var errorType = reflect.TypeFor[error]()
@@ -187,6 +194,18 @@ type walker struct {
 // claiming the same segment can be reported as ErrInvalidConfig instead of
 // silently overwriting each other in the path map.
 func (w *walker) walkType(t reflect.Type, goPath, koanfPath string, parentSteps []fieldStep, siblingSegments map[string]int) error {
+	// Depth guard. Catches finitely-deep but pathologically nested struct
+	// types (generated code, malicious input) that the cycle guard would
+	// not flag because each level is a distinct type.
+	if len(parentSteps) > maxStructDepth {
+		where := koanfPath
+		if where == "" {
+			where = "<root>"
+		}
+		return fmt.Errorf("%w: struct walk exceeded depth %d at koanf path %q",
+			ErrInvalidConfig, maxStructDepth, where)
+	}
+
 	// Cycle guard. Two values of the same Go type share an identical
 	// reflect.Type, so this catches both self-reference (Node.Next *Node)
 	// and mutual recursion (A→B→A). The koanf path (or "<root>" when the
