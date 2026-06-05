@@ -426,6 +426,27 @@ func TestStruct_CustomDelim_RoutesThroughEverything(t *testing.T) {
 	}
 }
 
+// A zero-valued Options must resolve PathTag → "koanf", ValidateTag →
+// "koanf-validate", and Delim → ".". The fixture is the same one used by
+// the custom-delim test so any drift in default-resolution surfaces here
+// as the dot-delimited counterpart. All three defaults are asserted by
+// observable behavior — never through reflection or package-level
+// constants — because the defaults are an internal implementation detail
+// that consumers only see through validation results.
+func TestStruct_ZeroOptions_AppliesAllDefaults(t *testing.T) {
+	t.Parallel()
+	cfg := &slashDelimCfg{}
+	err := koanfvalidate.Struct(cfg, koanfvalidate.Options{})
+	me := requireMultiError(t, err)
+	fe := findByPath(me, "server.port")
+	if fe == nil {
+		t.Fatalf("expected path 'server.port' (default PathTag + default Delim), got %v", pathsOf(me))
+	}
+	if fe.Tag != "required" {
+		t.Errorf("expected Tag %q (default ValidateTag resolved the koanf-validate:\"required\" rule), got %q", "required", fe.Tag)
+	}
+}
+
 // A nil *struct field whose type implements Validate() must NOT have
 // Validate() called on a synthetic zero value. The library walks the schema
 // at type-level for path mapping, but skips visitor execution when the
