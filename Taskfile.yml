@@ -1,3 +1,21 @@
+# Taskfile for koanf-validate (go-task — https://taskfile.dev).
+#
+# Quick reference:
+#   task                 # default — runs `task test`
+#   task fmt             # gofmt
+#   task vet             # go vet
+#   task test            # race-enabled unit tests
+#   task cover           # race tests + HTML coverage at coverage.html
+#   task bench           # benchmarks with allocations reported
+#   task lint            # vet + gofmt check + golangci-lint
+#   task vuln            # govulncheck (no caching — pulls latest tool)
+#   task tidy            # go mod tidy
+#   task ci              # full local CI: lint → test → vuln
+#
+# The `ci` target mirrors .github/workflows/ci.yml's job list so a local
+# `task ci` answers "would this push pass?" without waiting on GitHub.
+# Run it before opening a PR; CONTRIBUTING.md treats it as a soft gate.
+
 version: '3'
 
 tasks:
