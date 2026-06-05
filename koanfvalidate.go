@@ -23,6 +23,7 @@ package koanfvalidate
 import (
 	"cmp"
 	"errors"
+	"fmt"
 	"slices"
 	"sync"
 
@@ -63,6 +64,14 @@ const (
 	defaultPathTag     = "koanf"
 	defaultValidateTag = "koanf-validate"
 	defaultDelim       = "."
+
+	// maxValidateErrorDepth caps how deeply flattenValidateError will
+	// recurse when unwrapping errors returned from Validate() methods.
+	// A user (or an adversarial caller) returning deeply nested
+	// errors.Join chains shouldn't be able to drive the host into stack
+	// exhaustion; hitting the cap surfaces as a single invariant
+	// FieldError naming the limit.
+	maxValidateErrorDepth = 64
 )
 
 // Options configures a validation call. All fields are optional; zero values
@@ -205,7 +214,7 @@ func Struct(cfg any, opts Options) error {
 		if userErr == nil {
 			continue
 		}
-		fieldErrors = append(fieldErrors, flattenValidateError(userErr, recipe.koanfPath, opts.Delim)...)
+		fieldErrors = append(fieldErrors, flattenValidateError(userErr, recipe.koanfPath, opts.Delim, 0)...)
 	}
 
 	if len(fieldErrors) == 0 {
@@ -236,9 +245,18 @@ func Struct(cfg any, opts Options) error {
 // itself implements Unwrap() []error to expose its (sentinel, cause) chain;
 // without ordering we would recurse into that chain and lose the user's
 // intent.
-func flattenValidateError(err error, receiverPath, delim string) []*FieldError {
+func flattenValidateError(err error, receiverPath, delim string, depth int) []*FieldError {
 	if err == nil {
 		return nil
+	}
+
+	if depth >= maxValidateErrorDepth {
+		return []*FieldError{{
+			Path:     receiverPath,
+			Tag:      invariantTag,
+			sentinel: ErrInvariant,
+			cause:    fmt.Errorf("flattenValidateError: max depth %d exceeded; pathological Validate() return chain truncated", maxValidateErrorDepth),
+		}}
 	}
 
 	if fe, ok := err.(*FieldError); ok {
@@ -253,7 +271,7 @@ func flattenValidateError(err error, receiverPath, delim string) []*FieldError {
 		// common case allocation-free past initial growth.
 		out := make([]*FieldError, 0, len(children))
 		for _, sub := range children {
-			out = append(out, flattenValidateError(sub, receiverPath, delim)...)
+			out = append(out, flattenValidateError(sub, receiverPath, delim, depth+1)...)
 		}
 		return out
 	}
@@ -262,7 +280,7 @@ func flattenValidateError(err error, receiverPath, delim string) []*FieldError {
 		if inner := u.Unwrap(); inner != nil {
 			var fe *FieldError
 			if errors.As(inner, &fe) {
-				return flattenValidateError(inner, receiverPath, delim)
+				return flattenValidateError(inner, receiverPath, delim, depth+1)
 			}
 		}
 	}
