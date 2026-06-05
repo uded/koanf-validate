@@ -86,11 +86,11 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          # Run govulncheck against the module's declared MSRV so the scan
-          # answers "are there known vulns at the version we promise to
-          # support?" rather than at whatever Go the GitHub runners default
-          # to today. Reads from the `go` (or `toolchain`) directive in go.mod.
-          go-version-file: go.mod
+          # govulncheck@latest requires a recent Go to install (v1.3.0
+          # needs >= 1.25), but its analysis reads the module's own `go`
+          # directive — running the binary on stable Go does not bias
+          # the MSRV claim. Pinning to MSRV here only blocks the install.
+          go-version: 'stable'
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - name: Run govulncheck
