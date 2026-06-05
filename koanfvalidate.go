@@ -21,8 +21,9 @@
 package koanfvalidate
 
 import (
+	"cmp"
 	"errors"
-	"sort"
+	"slices"
 	"sync"
 
 	"github.com/go-playground/validator/v10"
@@ -211,11 +212,11 @@ func Struct(cfg any, opts Options) error {
 		return nil
 	}
 
-	sort.SliceStable(fieldErrors, func(i, j int) bool {
-		if fieldErrors[i].Path != fieldErrors[j].Path {
-			return fieldErrors[i].Path < fieldErrors[j].Path
+	slices.SortStableFunc(fieldErrors, func(a, b *FieldError) int {
+		if c := cmp.Compare(a.Path, b.Path); c != 0 {
+			return c
 		}
-		return fieldErrors[i].Tag < fieldErrors[j].Tag
+		return cmp.Compare(a.Tag, b.Tag)
 	})
 	return &MultiError{Errors: fieldErrors}
 }
