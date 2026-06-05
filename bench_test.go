@@ -44,7 +44,7 @@ func newValidNested() *benchNested {
 func BenchmarkStruct_DefaultPath(b *testing.B) {
 	cfg := newValidNested()
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if err := koanfvalidate.Struct(cfg, koanfvalidate.Options{}); err != nil {
 			b.Fatalf("unexpected error: %v", err)
 		}
@@ -59,7 +59,7 @@ func BenchmarkStruct_CustomValidator(b *testing.B) {
 	cfg := newValidNested()
 	opts := koanfvalidate.Options{Validator: v}
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if err := koanfvalidate.Struct(cfg, opts); err != nil {
 			b.Fatalf("unexpected error: %v", err)
 		}
@@ -77,7 +77,7 @@ func BenchmarkStruct_NonDefaultTag(b *testing.B) {
 	cfg := &cfgT{X: 5}
 	opts := koanfvalidate.Options{ValidateTag: "custom-validate"}
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if err := koanfvalidate.Struct(cfg, opts); err != nil {
 			b.Fatalf("unexpected error: %v", err)
 		}
@@ -90,7 +90,7 @@ func BenchmarkStruct_NonDefaultTag(b *testing.B) {
 func BenchmarkStruct_FailingValidation(b *testing.B) {
 	cfg := &benchNested{} // every required field empty
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if err := koanfvalidate.Struct(cfg, koanfvalidate.Options{}); err == nil {
 			b.Fatal("expected error, got nil")
 		}
@@ -126,7 +126,7 @@ func BenchmarkStruct_DeepNested(b *testing.B) {
 	cfg := &root{}
 	cfg.Down.Down.Down.Down.Leaf = leaf{A: "x", B: "y", C: "z", D: "w"}
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if err := koanfvalidate.Struct(cfg, koanfvalidate.Options{}); err != nil {
 			b.Fatalf("unexpected error: %v", err)
 		}
