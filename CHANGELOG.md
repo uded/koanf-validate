@@ -4,14 +4,42 @@ All notable changes to `koanf-validate` are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.0] — 2026-06-07
+## [0.9.1] — 2026-06-07
 
-**Release candidate for 1.0.** The public surface described below is the
-proposed v1.0 API. Treat this release as a stabilization window —
-breaking changes are still permitted before v1.0.0 ships, but the bar
-is high: only landed for concrete issues surfaced during the
-stabilization period. If none materialize, v1.0.0 follows unchanged
-and inherits the same stability commitment.
+**Second release candidate for 1.0.** Supersedes v0.9.0. The stabilization
+window caught one breaking change worth landing before the v1.0.0 freeze.
+
+### Removed (breaking)
+
+- **`slog.LogValuer` implementations on `*FieldError` and `*MultiError`**,
+  along with the `log/slog` import they pulled into the public surface.
+  A library has no business picking a logging framework on consumers'
+  behalf — slog, zerolog, zap, logrus, and logr all coexist in the Go
+  ecosystem, and forcing slog penalises every consumer who chose
+  otherwise. The structured-rendering need is met by `MarshalJSON`
+  below.
+
+### Added
+
+- **`MarshalJSON` on `*FieldError` and `*MultiError`.** Emits a stable
+  snake_case JSON envelope (`{count, errors:[{path, tag, param, …}]}`)
+  suitable for structured logs, JSONL audit trails, or HTTP API
+  responses. Honors the same redaction contract `Value` followed: the
+  failing value is included only when the originating `Struct` call set
+  `IncludeValues=true`. Optional fields (`param`, `raw_param`, `value`,
+  `path_unresolved`, `cause`) are omitted when empty. Consumers on any
+  logging framework can `json.Marshal` the error and feed the bytes
+  into their pipeline of choice.
+
+### Fixed
+
+- `MultiError.LogValue` (now removed) was silently emitting children as
+  Pascal-case struct fields via the JSON handler's `json.Marshal`
+  fallback for `KindAny` slices, completely bypassing per-element
+  `LogValuer` resolution. `MarshalJSON` on each child fixes this for
+  the JSON path that supersedes it. Permanent regression tests at
+  `TestFieldError_MarshalJSON_StructuredShape` and
+  `TestMultiError_MarshalJSON_StructuredShape`.
 
 ### Proposed stable public API (locked unless an issue surfaces)
 
@@ -49,47 +77,18 @@ will not jump within a patch series. The transitive pins on
 `validator/v10` and `golang.org/x/{crypto,sys,text}` continue to follow
 the rationale spelled out in the README's dependency-pinning notice.
 
-### Removed (breaking, pre-1.0)
+## [0.9.0] — 2026-06-07
 
-- **`slog.LogValuer` implementations on `*FieldError` and `*MultiError`.**
-  A library has no business pulling `log/slog` into its public surface or
-  picking a logging framework on consumers' behalf. The structured
-  rendering need is met by `MarshalJSON` — universal serialization,
-  zero framework lock-in. Consumers using slog can feed
-  `json.RawMessage(json.Marshal(err))` (or build their own `LogValuer`
-  wrapper); consumers on zerolog, zap, logrus, or anything else get the
-  same shape without paying for an slog import they don't use.
-
-### Added
-
-- **`MarshalJSON` on `*FieldError` and `*MultiError`.** Emits a stable
-  snake_case JSON envelope (`{count, errors:[{path, tag, param, …}]}`)
-  suitable for structured logs, JSONL audit trails, or HTTP API
-  responses. Honors the same redaction contract `Value` followed: the
-  failing value is included only when the originating `Struct` call set
-  `IncludeValues=true`. Optional fields (`param`, `raw_param`, `value`,
-  `path_unresolved`, `cause`) are omitted when empty.
-
-### Changed since v0.2.0
-
-Non-API hygiene only:
-
-- CI: vuln job switched to `go-version: 'stable'` so `govulncheck@latest`
-  always installs (the previous `go-version-file: go.mod` pin to MSRV
-  blocked the install step because the binary itself needs a recent Go).
-- CI: pinned `ossf/scorecard-action` to `v2.4.3` — the publisher does
-  not maintain a floating `@v2` tag.
-- Test files reorganized along the source-layout axis: `walker_test.go`,
-  `translate_test.go`, `errors_test.go`, `validate_method_test.go`,
-  `secrets_test.go`, `helpers_test.go`. The main test file dropped from
-  1380 LOC to 188 across six commits.
-- README: explicit scope note ruling out adapters for gookit/validate,
-  ozzo-validation, and govalidator. The walker is coupled to validator/v10's
-  `Namespace`/`Param`/`Tag` error shape.
-- Added GitHub issue and pull-request templates: structured bug report,
-  scope-checking feature request, security-routing `config.yml`, and a
-  PR template that reinforces the Conventional Commits title check and
-  the `-race` mandate.
+**Initial release candidate for 1.0.** Spelled out the proposed v1.0 API
+surface (including `slog.LogValuer` implementations that v0.9.1 later
+removed). Reorganized tests along the source-layout axis (`walker_test.go`,
+`translate_test.go`, `errors_test.go`, `validate_method_test.go`,
+`secrets_test.go`, `helpers_test.go` — main test file dropped from 1380
+to 188 LOC across six commits). Hardened CI (vuln job uses
+`go-version: 'stable'`; `ossf/scorecard-action` pinned to `v2.4.3`).
+Added GitHub issue and pull-request templates. README gained an explicit
+scope note ruling out adapters for gookit/validate, ozzo-validation, and
+govalidator.
 
 ## [0.2.0] — 2026-06-05
 
@@ -204,7 +203,8 @@ anonymous-embedded squash, `koanf:"-"` skip, custom rule passthrough via
 See the [v0.1.0 release notes](https://github.com/uded/koanf-validate/releases/tag/v0.1.0)
 for the full feature list.
 
-[Unreleased]: https://github.com/uded/koanf-validate/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/uded/koanf-validate/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/uded/koanf-validate/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/uded/koanf-validate/compare/v0.2.0...v0.9.0
 [0.2.0]: https://github.com/uded/koanf-validate/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/uded/koanf-validate/releases/tag/v0.1.0
