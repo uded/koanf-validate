@@ -32,6 +32,11 @@ Validate [koanf](https://github.com/knadh/koanf)-populated structs with errors k
 >   go get github.com/go-playground/validator/v10@latest
 >   ```
 >   Our public usage is API-compatible across the v10 line; the only reason we don't take that bump in our own `go.mod` is the MSRV constraint above.
+> - **Heads-up on inherited CVEs.** The pinned `x/crypto@v0.40.0` and `x/sys@v0.35.0` carry a handful of CVEs fixed only in versions requiring Go 1.24+. `govulncheck` against koanf-validate's own symbol graph reports zero reachable vulnerabilities — none of the vulnerable paths are called from this library. Downstream security tooling that scans your full binary will still flag the modules regardless, since transitive presence is hard to distinguish from actual reachability. If you're already on Go 1.24+ and want a clean scan, pull the fixes into your build via MVS:
+>   ```bash
+>   go get golang.org/x/crypto@latest golang.org/x/sys@latest
+>   ```
+>   This is exactly what the "minimum, not ceiling" point above is for.
 >
 > **Maintainer policy**
 >
