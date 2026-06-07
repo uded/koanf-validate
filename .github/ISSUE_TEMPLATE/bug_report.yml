@@ -1,0 +1,105 @@
+name: Bug report
+description: A wrong koanf path, missing/extra error, panic, or anything else the library does incorrectly.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: please check the
+        [latest release notes](https://github.com/uded/koanf-validate/releases)
+        and the [CHANGELOG](https://github.com/uded/koanf-validate/blob/main/CHANGELOG.md).
+        Many pre-1.0 issues are fixed in patch releases — upgrade first if you can.
+
+        If this is a **security** issue (secret leak, panic escaping into the host,
+        cause-chain bypass), close this and use the
+        [private vulnerability advisory](https://github.com/uded/koanf-validate/security/advisories/new)
+        flow instead. A public bug report on a security issue is itself a leak.
+
+  - type: input
+    id: kv-version
+    attributes:
+      label: koanf-validate version
+      description: e.g. `v0.2.0`. Use `go list -m github.com/uded/koanf-validate` if unsure.
+      placeholder: v0.2.0
+    validations:
+      required: true
+
+  - type: input
+    id: go-version
+    attributes:
+      label: Go version
+      description: Output of `go version`.
+      placeholder: go1.23.5
+    validations:
+      required: true
+
+  - type: input
+    id: validator-version
+    attributes:
+      label: validator/v10 version
+      description: From `go list -m github.com/go-playground/validator/v10`. Required if you override the minimum the library pins.
+      placeholder: v10.27.0
+    validations:
+      required: false
+
+  - type: input
+    id: koanf-version
+    attributes:
+      label: koanf version
+      description: From `go list -m github.com/knadh/koanf/v2`. Only relevant if your config flow is involved.
+      placeholder: v2.3.5
+    validations:
+      required: false
+
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: Minimal reproducer
+      description: |
+        A self-contained Go snippet that exhibits the bug — struct definition,
+        the `koanfvalidate.Struct(...)` call, and the input. Strip anything
+        not needed to reproduce. Prefer hard-coded values over loading from koanf
+        unless the bug only appears with a real koanf provider.
+      render: go
+      placeholder: |
+        type Config struct {
+            Server struct {
+                Port int `koanf:"port" koanf-validate:"required,min=1"`
+            } `koanf:"server"`
+        }
+
+        cfg := &Config{}
+        err := koanfvalidate.Struct(cfg, koanfvalidate.Options{})
+        fmt.Println(err)
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What koanf path(s), tag(s), and sentinel(s) should the FieldError surface?
+      placeholder: |
+        - Path "server.port"
+        - Tag "required"
+        - errors.Is(err, koanfvalidate.ErrRequired) == true
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Paste the full rendered `MultiError`, the panic stack, or whatever the library actually produced.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      description: Anything else — when this started failing, related issues, your koanf provider stack, custom `Options.Validator` setup.
+    validations:
+      required: false

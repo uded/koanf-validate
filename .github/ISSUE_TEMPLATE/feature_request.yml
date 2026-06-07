@@ -1,0 +1,60 @@
+name: Feature request
+description: Propose a change to the public API or behavior.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: this library is a **translation layer** between
+        validator/v10 and koanf paths. Most "I want validator/v10 to support X"
+        requests belong upstream at
+        [go-playground/validator](https://github.com/go-playground/validator/issues).
+        Most "I want to write a custom rule" requests are already solved by
+        `Options.Validator` (register on your own `*validator.Validate`) or by
+        implementing a `Validate() error` method on the type. Read the
+        [README's "What it doesn't do" section](https://github.com/uded/koanf-validate#what-it-doesnt-do)
+        to check whether the feature is intentionally out of scope.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What configuration / validation problem are you trying to solve? Be concrete — a real struct definition and a real failure mode beat an abstract description.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: |
+        What should the library do? If the proposal changes a public type
+        (Options, FieldError, MultiError, StructValidator), spell out the new
+        signature. Backwards compatibility matters pre-1.0 but is not absolute —
+        say whether you'd accept a breaking change.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: |
+        What workarounds have you tried? Specifically — does this work with
+        `Options.Validator` + a custom registered rule? With a `Validate()`
+        method on the type? If so, why is that insufficient?
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Why this belongs in koanf-validate
+      description: |
+        This library translates validator/v10 errors into koanf-path-keyed
+        diagnostics. Features that don't relate to that translation
+        (new validation rules, message i18n, struct filtering) typically
+        live upstream or in user code. Argue the case.
+    validations:
+      required: true

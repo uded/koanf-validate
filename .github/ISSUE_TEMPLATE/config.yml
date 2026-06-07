@@ -1,0 +1,13 @@
+# Disable blank issues so reports use a structured template — keeps the
+# triage queue navigable and prevents "found a bug, can't reproduce"
+# threads that go nowhere.
+blank_issues_enabled: false
+
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/uded/koanf-validate/security/advisories/new
+    about: |
+      Found a vulnerability? Do NOT open a public issue. Use the private
+      vulnerability advisory flow (or see SECURITY.md for the fallback
+      email path). Reporting security issues in the public tracker is
+      itself a leak.
