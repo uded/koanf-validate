@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 )
 
 // invariantTag is the FieldError.Tag value used for failures produced by a
@@ -19,9 +18,18 @@ const invariantTag = "invariant"
 // non-pointer, a nil pointer, or a pointer to a non-struct value.
 var ErrInvalidInput = errors.New("koanfvalidate: input must be a non-nil pointer to a struct")
 
-// ErrInvalidConfig is returned when the Options struct is invalid — e.g. a
-// negative-sized parameter or an unparseable custom tag name.
-var ErrInvalidConfig = errors.New("koanfvalidate: invalid Options")
+// ErrInvalidConfig is returned for two distinct misconfigurations:
+//
+//   - Options itself is malformed: PathTag equals ValidateTag, or a tag
+//     name contains whitespace, a comma, or a double quote. Validation
+//     happens at the start of Struct().
+//   - cfg's struct shape is malformed: two sibling fields claim the same
+//     koanf segment (including via anonymous-embedded squash), or nesting
+//     exceeds the walker's depth cap (64).
+//
+// Both surface as wrapped ErrInvalidConfig — discriminate by reading the
+// error message if you need to act differently on each cause.
+var ErrInvalidConfig = errors.New("koanfvalidate: invalid configuration")
 
 // ErrCyclicType is returned when the walker encounters a struct type that
 // recursively references itself (directly or transitively). Validating such
@@ -205,26 +213,13 @@ func (e *FieldError) Unwrap() []error {
 // Tag) so test output and logs remain stable across runs.
 //
 // The Errors slice is part of the public contract: read it, range over it,
-// pass it to a structured logger. Two invariants apply post-construction:
-//
-//   - Order is sorted by (Path, Tag) ascending. Tests, log dedup, and
-//     snapshot comparison all rely on this. Re-sorting or shuffling the
-//     slice produces a MultiError that no longer satisfies the contract.
-//   - Length is fixed. Unwrap caches a []error view of Errors on its first
-//     call (so errors.Is / errors.As traversal is allocation-free for
-//     subsequent calls); appending to or truncating Errors after the first
-//     Unwrap leaves the cache stale.
-//
-// Treat the slice as immutable. Callers that need a mutable copy should
-// allocate one explicitly: append([]*FieldError(nil), me.Errors...).
+// pass it to a structured logger. The library does not cache derived views
+// of Errors anywhere, so mutating the slice after the MultiError is
+// returned is safe — but mutations are still discouraged because the sort
+// invariant (by Path, then Tag) is what test output, log dedup, and
+// snapshot comparison rely on.
 type MultiError struct {
 	Errors []*FieldError
-
-	// unwrapped is the cached []error view of Errors. errors.Is / errors.As
-	// walk via Unwrap repeatedly, so lazy-initialising the slice once
-	// amortises the allocation across the lifetime of the MultiError.
-	unwrapOnce sync.Once
-	unwrapped  []error
 }
 
 // Error renders the MultiError as a newline-joined list of FieldError strings,
@@ -246,19 +241,16 @@ func (m *MultiError) Error() string {
 // errors.Is(multi, ErrRequired) returns true iff any contained FieldError
 // has ErrRequired as its sentinel.
 //
-// The returned slice is lazily populated on first call and reused for
-// subsequent calls; callers MUST treat it as read-only. Mutations to the
-// exported Errors field after the first Unwrap will not be reflected in
-// the cached slice — see the type's godoc for the invariant.
+// The returned slice is freshly allocated on every call so it always
+// reflects the current state of Errors. There is no cached view to go
+// stale if a caller mutates the slice — the cost is one allocation per
+// Unwrap call, which errors.Is/errors.As amortize over their traversal.
 func (m *MultiError) Unwrap() []error {
-	m.unwrapOnce.Do(func() {
-		out := make([]error, len(m.Errors))
-		for i, fe := range m.Errors {
-			out[i] = fe
-		}
-		m.unwrapped = out
-	})
-	return m.unwrapped
+	out := make([]error, len(m.Errors))
+	for i, fe := range m.Errors {
+		out[i] = fe
+	}
+	return out
 }
 
 // MarshalJSON mirrors LogValue's shape so encoding/json consumers see the

@@ -4,6 +4,86 @@ All notable changes to `koanf-validate` are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] — 2026-06-07
+
+**Third release candidate for 1.0.** Supersedes v0.9.1. Bundles a
+principal-review pass: one new validation behavior, several godoc
+corrections lifting truthful contracts onto the soon-to-freeze surface,
+plus a foot-gun removal on `MultiError`.
+
+### Added
+
+- **Options validation.** `Struct()` now rejects malformed `Options` at
+  the start of the call with wrapped `ErrInvalidConfig` when `PathTag`
+  equals `ValidateTag`, or when either tag name contains whitespace,
+  a comma, or a double quote. Surfaces what was previously a cryptic
+  failure inside validator/v10 or reflect.StructTag as a clear,
+  early diagnostic.
+
+### Changed
+
+- **`MultiError.Unwrap` no longer caches.** The previous `sync.Once`
+  cache made `Errors` an irrevocable snapshot after the first
+  `errors.Is`/`errors.As` walk — mutating the slice afterwards left
+  the cache stale (silent foot-gun). `Unwrap` now allocates fresh per
+  call. One allocation per traversal, but the foot-gun is gone.
+- **`ErrInvalidConfig` godoc rewritten** to describe the two distinct
+  cases it actually fires for: malformed `Options` (per the Added
+  entry above) and malformed cfg struct shape (sibling collision,
+  depth excess).
+- **`Options.Delim` godoc** no longer mentions absolute-path detection
+  that was removed earlier — paths from `Validate()` methods are
+  unconditionally prefixed with `receiver+Delim`.
+- **`Struct()` godoc** lists every possible return shape — the
+  previous "nil or `*MultiError`" wording missed `ErrInvalidInput`,
+  `ErrInvalidConfig`, `ErrCyclicType`, and the propagated
+  `*validator.InvalidValidationError`.
+- **`StructValidator` godoc** explicitly warns that `Param` on a
+  returned `*FieldError` must be the unqualified sibling-field name —
+  pre-qualifying it (e.g. `"server.min_port"` from a receiver mounted
+  at `"server"`) double-prefixes silently.
+- **`crossFieldTags` is now derived from `tagToSentinel`** at init
+  rather than hand-maintained as a parallel set — single source of
+  truth, drift-proof.
+- **CONTRIBUTING.md** corrected to state Go 1.23+ (tracking koanf v2)
+  instead of the stale Go 1.25+ claim.
+
+### Internal
+
+- `validateCalled` test-only flag promoted to `atomic.Bool` so the race
+  detector stays silent and the fixture survives any future
+  `t.Parallel()` addition.
+
+### Proposed stable public API (locked unless an issue surfaces)
+
+Same surface as v0.9.1 — the breaking removals from v0.9.0 → v0.9.1
+hold. Three behavioral invariants are now explicitly part of the
+freeze (previously only documented in godoc):
+
+- **`MultiError.Errors` ordering.** Sorted by `(Path, Tag)` ascending.
+  Snapshot tests, log dedup, and structured-error consumers may rely on
+  this ordering. Re-sorting or shuffling the slice yields a MultiError
+  that no longer satisfies the contract.
+- **`Options.Validator` non-mutation.** The library does not call
+  `SetTagName`, `RegisterValidation`, or any other mutator on a
+  caller-supplied `*validator.Validate`. Sharing one validator across
+  goroutines via `Options.Validator` is safe.
+- **`ErrPathUnresolved` chain rule.** Whenever the walker cannot map a
+  validator namespace to a koanf path (dive, map values, slice
+  elements, rules from `RegisterStructValidation`), the returned
+  `*FieldError` carries the category sentinel AND `ErrPathUnresolved`
+  in its `Unwrap` chain. `errors.Is(fe, ErrPathUnresolved)` is the
+  documented way to detect a degraded path without losing the
+  category match.
+
+(The proposed-stable surface itself — `Struct`, `Options`, `*FieldError`,
+`*MultiError`, `StructValidator`, all 12 sentinels — carries over
+unchanged from v0.9.1.)
+
+### MSRV policy (proposed for 1.x)
+
+Unchanged from v0.9.1.
+
 ## [0.9.1] — 2026-06-07
 
 **Second release candidate for 1.0.** Supersedes v0.9.0. The stabilization
@@ -203,7 +283,8 @@ anonymous-embedded squash, `koanf:"-"` skip, custom rule passthrough via
 See the [v0.1.0 release notes](https://github.com/uded/koanf-validate/releases/tag/v0.1.0)
 for the full feature list.
 
-[Unreleased]: https://github.com/uded/koanf-validate/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/uded/koanf-validate/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/uded/koanf-validate/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/uded/koanf-validate/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/uded/koanf-validate/compare/v0.2.0...v0.9.0
 [0.2.0]: https://github.com/uded/koanf-validate/compare/v0.1.0...v0.2.0

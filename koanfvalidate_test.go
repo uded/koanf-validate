@@ -41,6 +41,31 @@ type customRuleCfg struct {
 // Category 1: Input validation
 // =============================================================================
 
+func TestStruct_OptionsValidation(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		opts koanfvalidate.Options
+	}{
+		{"PathTag equals ValidateTag", koanfvalidate.Options{PathTag: "same", ValidateTag: "same"}},
+		{"PathTag contains comma", koanfvalidate.Options{PathTag: "ko,nf"}},
+		{"PathTag contains whitespace", koanfvalidate.Options{PathTag: "koanf tag"}},
+		{"PathTag contains quote", koanfvalidate.Options{PathTag: `bad"tag`}},
+		{"ValidateTag contains comma", koanfvalidate.Options{ValidateTag: "vali,date"}},
+		{"ValidateTag contains whitespace", koanfvalidate.Options{ValidateTag: "vali date"}},
+		{"ValidateTag contains quote", koanfvalidate.Options{ValidateTag: `vali"date`}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := koanfvalidate.Struct(&simpleCfg{Name: "x"}, tc.opts)
+			if !errors.Is(err, koanfvalidate.ErrInvalidConfig) {
+				t.Fatalf("expected ErrInvalidConfig, got %v", err)
+			}
+		})
+	}
+}
+
 func TestStruct_InputValidation(t *testing.T) {
 	cases := []struct {
 		name  string

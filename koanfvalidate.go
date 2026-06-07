@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/go-playground/validator/v10"
@@ -74,6 +75,28 @@ const (
 	maxValidateErrorDepth = 64
 )
 
+// invalidTagChars are characters that have special meaning inside a Go
+// struct-tag value or that confuse validator/v10's tag parser. PathTag
+// and ValidateTag must not contain any of these; the failure mode without
+// this check is cryptic errors from deep inside reflection/parsing code.
+const invalidTagChars = " \t\n\","
+
+// validateOptions enforces the contract documented on Options and
+// surfaces violations as wrapped ErrInvalidConfig. Called after the
+// default-filling pass in Struct(), so values are guaranteed non-empty.
+func validateOptions(opts Options) error {
+	if opts.PathTag == opts.ValidateTag {
+		return fmt.Errorf("%w: PathTag and ValidateTag must differ (both are %q)", ErrInvalidConfig, opts.PathTag)
+	}
+	if strings.ContainsAny(opts.PathTag, invalidTagChars) {
+		return fmt.Errorf("%w: PathTag %q contains invalid characters (whitespace, comma, or quote)", ErrInvalidConfig, opts.PathTag)
+	}
+	if strings.ContainsAny(opts.ValidateTag, invalidTagChars) {
+		return fmt.Errorf("%w: ValidateTag %q contains invalid characters (whitespace, comma, or quote)", ErrInvalidConfig, opts.ValidateTag)
+	}
+	return nil
+}
+
 // Options configures a validation call. All fields are optional; zero values
 // trigger sensible defaults documented per field.
 type Options struct {
@@ -117,10 +140,11 @@ type Options struct {
 	// when the redacted message is insufficient.
 	IncludeValues bool
 
-	// Delim is the path separator joining koanf path segments and used to
-	// detect already-absolute paths returned by Validate() methods. Empty
-	// → "." (matches koanf's own default). Set this to whatever separator
-	// you passed to koanf.New.
+	// Delim is the path separator joining koanf path segments. Empty → "."
+	// (matches koanf's own default). Set this to whatever separator you
+	// passed to koanf.New. Paths returned from a Validate() method are
+	// always interpreted as relative to the receiver and prefixed with
+	// receiver+Delim — there is no absolute-path detection.
 	Delim string
 }
 
@@ -141,15 +165,36 @@ type Options struct {
 //     "server.port". Param is rebased the same way ONLY when Tag names a
 //     known cross-field rule (gtefield, eqfield, …); literal scalar Params
 //     (e.g. "10") survive verbatim regardless of the receiver path.
+//
+//     IMPORTANT: when Tag is a cross-field rule, Param MUST be the
+//     UNQUALIFIED name of a sibling field (e.g. "min_port"), NOT a
+//     pre-qualified koanf path. The library unconditionally prefixes Param
+//     with the receiver path — passing "server.min_port" from a Validate
+//     method on a struct mounted at "server" produces "server.server.min_port".
 //   - errors.Join(...) of any combination of the above — each leaf is added
 //     to the returned MultiError.
 type StructValidator interface {
 	Validate() error
 }
 
-// Struct validates cfg and returns nil on success or a *MultiError on
-// failure. cfg must be a non-nil pointer to a struct; any other input
-// produces an error matching ErrInvalidInput.
+// Struct validates cfg and returns one of:
+//
+//   - nil — every rule passed.
+//   - *MultiError — one or more validation failures; the typical return.
+//   - ErrInvalidInput (wrapped) — cfg was nil, a non-pointer, a nil pointer,
+//     or a pointer to a non-struct.
+//   - ErrInvalidConfig (wrapped) — opts itself is malformed (PathTag equals
+//     ValidateTag, tag name contains illegal characters), OR cfg's struct
+//     shape is malformed (two sibling fields claim the same koanf segment;
+//     nesting exceeds the depth cap).
+//   - ErrCyclicType (wrapped) — cfg's type recursively references itself.
+//   - *validator.InvalidValidationError — propagated verbatim when
+//     validator/v10 itself rejects the input (e.g. passed a non-struct
+//     through a custom Validator). Distinct from a validation FAILURE.
+//
+// Use errors.As(err, &me) where me is *MultiError to discriminate the
+// validation-failure case from the other categories. errors.Is against
+// any of the sentinels reaches them through their wrap chains.
 //
 // Behavior:
 //   - Tag-based rules from validator/v10 are evaluated first.
@@ -165,6 +210,9 @@ func Struct(cfg any, opts Options) error {
 	}
 	if opts.Delim == "" {
 		opts.Delim = defaultDelim
+	}
+	if err := validateOptions(opts); err != nil {
+		return err
 	}
 
 	// Resolve the input first so that bad inputs are rejected before any

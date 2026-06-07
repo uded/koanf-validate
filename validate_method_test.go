@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/go-playground/validator/v10"
@@ -119,13 +120,14 @@ type instrumentedValidate struct {
 	X int `koanf:"x"`
 }
 
-// validateCalled tracks invocation of instrumentedValidate.Validate. Mutated
-// only from a t.Cleanup-guarded test that resets it; not concurrency-safe
-// by design.
-var validateCalled bool
+// validateCalled tracks invocation of instrumentedValidate.Validate.
+// atomic.Bool so the two tests touching it can safely run with
+// t.Parallel() if anyone adds it later, and so the race detector stays
+// silent if a future test exercises the same fixture concurrently.
+var validateCalled atomic.Bool
 
 func (o *instrumentedValidate) Validate() error {
-	validateCalled = true
+	validateCalled.Store(true)
 	return nil
 }
 
@@ -237,29 +239,30 @@ func TestStruct_ValidateParam_LiteralPreservedForNonCrossFieldTags(t *testing.T)
 }
 
 func TestStruct_NilPointerStructValidator_IsSkipped(t *testing.T) {
-	// Not parallel — toggles a package-level flag observed by the assertion.
-	t.Cleanup(func() { validateCalled = false })
-	validateCalled = false
+	// Not parallel — observes a package-level atomic shared with
+	// TestStruct_NonNilPointerStructValidator_IsCalled.
+	t.Cleanup(func() { validateCalled.Store(false) })
+	validateCalled.Store(false)
 
 	cfg := &withOptionalSubCfg{Server: nil}
 	if err := koanfvalidate.Struct(cfg, koanfvalidate.Options{}); err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
-	if validateCalled {
+	if validateCalled.Load() {
 		t.Error("Validate() was called on a nil *struct field — must be skipped")
 	}
 }
 
 // Sanity: a non-nil pointer must still trigger Validate().
 func TestStruct_NonNilPointerStructValidator_IsCalled(t *testing.T) {
-	t.Cleanup(func() { validateCalled = false })
-	validateCalled = false
+	t.Cleanup(func() { validateCalled.Store(false) })
+	validateCalled.Store(false)
 
 	cfg := &withOptionalSubCfg{Server: &instrumentedValidate{X: 1}}
 	if err := koanfvalidate.Struct(cfg, koanfvalidate.Options{}); err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
-	if !validateCalled {
+	if !validateCalled.Load() {
 		t.Error("Validate() was not called on a non-nil *struct field")
 	}
 }

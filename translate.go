@@ -89,14 +89,19 @@ var tagToSentinel = map[string]error{
 }
 
 // crossFieldTags is the subset of rule tags whose Param() value is a Go field
-// path (sibling-relative) rather than a literal scalar. Used to decide whether
-// to translate Param via the goPath→koanfPath map.
-var crossFieldTags = map[string]struct{}{
-	"eqfield": {}, "nefield": {}, "gtfield": {}, "gtefield": {},
-	"ltfield": {}, "ltefield": {},
-	"eqcsfield": {}, "necsfield": {}, "gtcsfield": {}, "gtecsfield": {},
-	"ltcsfield": {}, "ltecsfield": {},
-}
+// path (sibling-relative) rather than a literal scalar. Derived from
+// tagToSentinel at init: any tag mapped to ErrFieldMismatch is, by
+// definition, a cross-field rule. Single source of truth — adding a new
+// cross-field tag to tagToSentinel automatically lifts it into this set.
+var crossFieldTags = func() map[string]struct{} {
+	out := make(map[string]struct{})
+	for tag, sentinel := range tagToSentinel {
+		if sentinel == ErrFieldMismatch {
+			out[tag] = struct{}{}
+		}
+	}
+	return out
+}()
 
 // translateFieldError converts a single validator.FieldError into our
 // *FieldError, remapping Namespace → koanf path and (for cross-field tags)

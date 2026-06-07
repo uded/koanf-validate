@@ -17,8 +17,10 @@ the document, not the obstacle.
 
 ## Development setup
 
-Requires Go 1.25+ (matches `validator/v10`'s MSRV) and
-[Task](https://taskfile.dev) for the build harness.
+Requires Go 1.23+ (tracks koanf v2's MSRV — see [README's dependency-pinning
+notice](./README.md#-dependency-pinning-notice) for the rationale) and
+[Task](https://taskfile.dev) for the build harness. Any newer Go release
+works locally; CI verifies the full supported range.
 
 ```bash
 git clone https://github.com/uded/koanf-validate.git
@@ -41,7 +43,7 @@ Useful task targets:
 | `task ci` | full pipeline: `lint` → `test` → `vuln` |
 
 `task ci` must be green before opening a pull request. CI runs the same
-pipeline on Go 1.25 and 1.26.
+pipeline against the full supported Go matrix (1.23, 1.24, 1.25, 1.26).
 
 ## Pull-request flow
 
