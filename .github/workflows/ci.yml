@@ -99,7 +99,7 @@ jobs:
         # makes the artifact directly consumable by `benchstat`.
         run: go test -bench=. -benchmem -count=6 -benchtime=2s -run=^$ ./... | tee bench.txt
       - name: Upload bench output
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bench-${{ github.sha }}
           path: bench.txt
