@@ -4,6 +4,72 @@ All notable changes to `koanf-validate` are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] — 2026-06-07
+
+**Release candidate for 1.0.** The public surface described below is the
+proposed v1.0 API. Treat this release as a stabilization window —
+breaking changes are still permitted before v1.0.0 ships, but the bar
+is high: only landed for concrete issues surfaced during the
+stabilization period. If none materialize, v1.0.0 follows unchanged
+and inherits the same stability commitment.
+
+### Proposed stable public API (locked unless an issue surfaces)
+
+The following will be frozen for the entire v1.x line once v1.0.0 ships;
+during the 0.9.x window they are committed only with the asterisk above:
+
+- `koanfvalidate.Struct(cfg any, opts Options) error` — the entry point.
+- `Options{Validator, PathTag, ValidateTag, IncludeValues, Delim}` —
+  caller-facing knobs. New fields may be added (zero values must stay
+  meaningful); existing fields will not be removed or repurposed.
+- `*FieldError` — `Path`, `Tag`, `Param`, `RawParam`, `Value` fields;
+  `Error()`, `Unwrap() []error`, `LogValue()` methods.
+- `*MultiError` — `Errors` slice (sort + length invariants documented in
+  the type's godoc); `Error()`, `Unwrap() []error`, `LogValue()` methods.
+- `StructValidator` interface — the type-anchored `Validate() error`
+  auto-discovery contract.
+- Sentinel errors: `ErrInvalidInput`, `ErrInvalidConfig`, `ErrCyclicType`,
+  `ErrValidation`, `ErrRequired`, `ErrOutOfRange`, `ErrNotInSet`,
+  `ErrBadFormat`, `ErrFieldMismatch`, `ErrInvariant`, `ErrPanic`,
+  `ErrPathUnresolved`. New sentinels may be added; existing ones will
+  not change identity or move out of the public surface.
+
+### Internal surface — not covered
+
+Anything in `walker.go`, `translate.go`, and unexported identifiers in
+`koanfvalidate.go` / `errors.go` is implementation. Cache layouts,
+recursion bounds, sort algorithms, the `redactedFieldError` wrapper —
+all remain free to change within the 1.x line once cut.
+
+### MSRV policy (proposed for 1.x)
+
+MSRV tracks koanf v2's `go` directive. When koanf raises its minimum,
+this library will follow in the next minor (1.1, 1.2, …); the floor
+will not jump within a patch series. The transitive pins on
+`validator/v10` and `golang.org/x/{crypto,sys,text}` continue to follow
+the rationale spelled out in the README's dependency-pinning notice.
+
+### Changed since v0.2.0
+
+Non-API hygiene only:
+
+- CI: vuln job switched to `go-version: 'stable'` so `govulncheck@latest`
+  always installs (the previous `go-version-file: go.mod` pin to MSRV
+  blocked the install step because the binary itself needs a recent Go).
+- CI: pinned `ossf/scorecard-action` to `v2.4.3` — the publisher does
+  not maintain a floating `@v2` tag.
+- Test files reorganized along the source-layout axis: `walker_test.go`,
+  `translate_test.go`, `errors_test.go`, `validate_method_test.go`,
+  `secrets_test.go`, `helpers_test.go`. The main test file dropped from
+  1380 LOC to 188 across six commits.
+- README: explicit scope note ruling out adapters for gookit/validate,
+  ozzo-validation, and govalidator. The walker is coupled to validator/v10's
+  `Namespace`/`Param`/`Tag` error shape.
+- Added GitHub issue and pull-request templates: structured bug report,
+  scope-checking feature request, security-routing `config.yml`, and a
+  PR template that reinforces the Conventional Commits title check and
+  the `-race` mandate.
+
 ## [0.2.0] — 2026-06-05
 
 ### Changed
@@ -117,6 +183,7 @@ anonymous-embedded squash, `koanf:"-"` skip, custom rule passthrough via
 See the [v0.1.0 release notes](https://github.com/uded/koanf-validate/releases/tag/v0.1.0)
 for the full feature list.
 
-[Unreleased]: https://github.com/uded/koanf-validate/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/uded/koanf-validate/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/uded/koanf-validate/compare/v0.2.0...v0.9.0
 [0.2.0]: https://github.com/uded/koanf-validate/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/uded/koanf-validate/releases/tag/v0.1.0
