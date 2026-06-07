@@ -1,10 +1,8 @@
 package koanfvalidate_test
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"strings"
 	"testing"
 
@@ -12,13 +10,15 @@ import (
 )
 
 // =============================================================================
-// slog.LogValuer — structured rendering
+// encoding/json — structured serialization
 // =============================================================================
 
-// FieldError.LogValue must surface every structured attribute (path, tag,
-// param, raw_param, value, cause) so a slog handler emits them as typed
-// JSON fields rather than the Error() string.
-func TestFieldError_LogValue_RendersStructuredAttrs(t *testing.T) {
+// FieldError.MarshalJSON must emit snake_case structured attributes (path,
+// tag, param, raw_param, value, cause, path_unresolved) so consumers can
+// feed validation errors into any structured pipeline — log frameworks,
+// audit trails, HTTP APIs — without writing a wrapper themselves. The
+// library deliberately does not adapt to any specific logging framework.
+func TestFieldError_MarshalJSON_StructuredShape(t *testing.T) {
 	t.Parallel()
 	cfg := &simpleCfg{} // Name required, Age min=0 ok
 	me := requireMultiError(t, koanfvalidate.Struct(cfg, koanfvalidate.Options{}))
@@ -27,54 +27,62 @@ func TestFieldError_LogValue_RendersStructuredAttrs(t *testing.T) {
 		t.Fatalf("no FieldError at name")
 	}
 
-	var buf bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&buf, nil))
-	logger.Info("validation failed", "err", fe)
-
-	var line map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &line); err != nil {
-		t.Fatalf("not valid JSON: %v\n%s", err, buf.String())
+	raw, err := json.Marshal(fe)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
 	}
-	errAttr, ok := line["err"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected err to be a group; got %T: %v", line["err"], line["err"])
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("not valid JSON: %v\n%s", err, raw)
 	}
-	if errAttr["path"] != "name" {
-		t.Errorf("path: got %v, want name", errAttr["path"])
+	if out["path"] != "name" {
+		t.Errorf("path: got %v, want name", out["path"])
 	}
-	if errAttr["tag"] != "required" {
-		t.Errorf("tag: got %v, want required", errAttr["tag"])
+	if out["tag"] != "required" {
+		t.Errorf("tag: got %v, want required", out["tag"])
 	}
-	if _, hasValue := errAttr["value"]; hasValue {
-		t.Errorf("value attribute must be absent when IncludeValues=false; got %v", errAttr["value"])
+	if _, hasValue := out["value"]; hasValue {
+		t.Errorf("value attribute must be absent when IncludeValues=false; got %v", out["value"])
+	}
+	// Confirm we're producing snake_case via MarshalJSON, not Pascal-case
+	// via struct-default JSON encoding.
+	if _, pascal := out["Path"]; pascal {
+		t.Errorf("emitted Pascal-case 'Path' — MarshalJSON not invoked")
 	}
 }
 
-// MultiError.LogValue renders as {count, errors:[…]} with each FieldError
-// using its own structured attributes.
-func TestMultiError_LogValue_RendersGroup(t *testing.T) {
+// MultiError.MarshalJSON renders as {count, errors:[…]} with each child
+// going through FieldError.MarshalJSON. This is the regression guard for
+// the bug where a parent serializer bypassed per-element resolution.
+func TestMultiError_MarshalJSON_StructuredShape(t *testing.T) {
 	t.Parallel()
 	cfg := &simpleCfg{}
 	err := koanfvalidate.Struct(cfg, koanfvalidate.Options{})
 
-	var buf bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&buf, nil))
-	logger.Info("config rejected", "result", err)
-
-	var line map[string]any
-	if jerr := json.Unmarshal(buf.Bytes(), &line); jerr != nil {
-		t.Fatalf("not valid JSON: %v", jerr)
+	raw, jerr := json.Marshal(err)
+	if jerr != nil {
+		t.Fatalf("Marshal: %v", jerr)
 	}
-	result, ok := line["result"].(map[string]any)
-	if !ok {
-		t.Fatalf("result not a group: %T", line["result"])
+	var out map[string]any
+	if uerr := json.Unmarshal(raw, &out); uerr != nil {
+		t.Fatalf("not valid JSON: %v", uerr)
 	}
-	if got, want := result["count"], float64(1); got != want {
+	if got, want := out["count"], float64(1); got != want {
 		t.Errorf("count: got %v, want %v", got, want)
 	}
-	errs, ok := result["errors"].([]any)
+	errs, ok := out["errors"].([]any)
 	if !ok || len(errs) != 1 {
-		t.Fatalf("errors not a 1-element array: %v", result["errors"])
+		t.Fatalf("errors not a 1-element array: %v", out["errors"])
+	}
+	child, ok := errs[0].(map[string]any)
+	if !ok {
+		t.Fatalf("child is %T, not a map — per-element MarshalJSON bypassed", errs[0])
+	}
+	if child["path"] != "name" {
+		t.Errorf("child path: got %v, want name", child["path"])
+	}
+	if _, pascal := child["Path"]; pascal {
+		t.Errorf("child emitted Pascal-case 'Path' — per-element MarshalJSON not invoked")
 	}
 }
 

@@ -23,9 +23,9 @@ during the 0.9.x window they are committed only with the asterisk above:
   caller-facing knobs. New fields may be added (zero values must stay
   meaningful); existing fields will not be removed or repurposed.
 - `*FieldError` — `Path`, `Tag`, `Param`, `RawParam`, `Value` fields;
-  `Error()`, `Unwrap() []error`, `LogValue()` methods.
+  `Error()`, `Unwrap() []error`, `MarshalJSON()` methods.
 - `*MultiError` — `Errors` slice (sort + length invariants documented in
-  the type's godoc); `Error()`, `Unwrap() []error`, `LogValue()` methods.
+  the type's godoc); `Error()`, `Unwrap() []error`, `MarshalJSON()` methods.
 - `StructValidator` interface — the type-anchored `Validate() error`
   auto-discovery contract.
 - Sentinel errors: `ErrInvalidInput`, `ErrInvalidConfig`, `ErrCyclicType`,
@@ -48,6 +48,27 @@ this library will follow in the next minor (1.1, 1.2, …); the floor
 will not jump within a patch series. The transitive pins on
 `validator/v10` and `golang.org/x/{crypto,sys,text}` continue to follow
 the rationale spelled out in the README's dependency-pinning notice.
+
+### Removed (breaking, pre-1.0)
+
+- **`slog.LogValuer` implementations on `*FieldError` and `*MultiError`.**
+  A library has no business pulling `log/slog` into its public surface or
+  picking a logging framework on consumers' behalf. The structured
+  rendering need is met by `MarshalJSON` — universal serialization,
+  zero framework lock-in. Consumers using slog can feed
+  `json.RawMessage(json.Marshal(err))` (or build their own `LogValuer`
+  wrapper); consumers on zerolog, zap, logrus, or anything else get the
+  same shape without paying for an slog import they don't use.
+
+### Added
+
+- **`MarshalJSON` on `*FieldError` and `*MultiError`.** Emits a stable
+  snake_case JSON envelope (`{count, errors:[{path, tag, param, …}]}`)
+  suitable for structured logs, JSONL audit trails, or HTTP API
+  responses. Honors the same redaction contract `Value` followed: the
+  failing value is included only when the originating `Struct` call set
+  `IncludeValues=true`. Optional fields (`param`, `raw_param`, `value`,
+  `path_unresolved`, `cause`) are omitted when empty.
 
 ### Changed since v0.2.0
 

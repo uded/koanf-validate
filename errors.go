@@ -1,9 +1,9 @@
 package koanfvalidate
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"sync"
 )
@@ -144,31 +144,39 @@ func (e *FieldError) Error() string {
 	return base
 }
 
-// LogValue implements slog.LogValuer so structured loggers emit each
-// FieldError as a group of typed attributes (path, tag, param, …) rather
-// than just the Error() string. Honors the redaction contract: Value is
-// only included when set (which only happens when IncludeValues=true at
-// the originating Struct call).
-func (e *FieldError) LogValue() slog.Value {
-	attrs := make([]slog.Attr, 0, 6)
-	attrs = append(attrs, slog.String("path", e.Path))
-	attrs = append(attrs, slog.String("tag", e.Tag))
-	if e.Param != "" {
-		attrs = append(attrs, slog.String("param", e.Param))
+// MarshalJSON emits a stable snake_case representation suitable for
+// structured logs, JSONL audit trails, or API responses. Optional fields
+// (Param, RawParam, Value, path_unresolved, cause) are omitted when empty
+// or default; RawParam is omitted when it duplicates Param. Value is
+// included only when the originating Struct call set IncludeValues=true.
+//
+// The library intentionally provides no adapter for any specific logging
+// framework — consumers can json.Marshal directly into whichever logger
+// they use (slog, zerolog, zap, logrus, …) or build their own
+// representation from the exported FieldError fields.
+func (e *FieldError) MarshalJSON() ([]byte, error) {
+	out := struct {
+		Path           string `json:"path"`
+		Tag            string `json:"tag"`
+		Param          string `json:"param,omitempty"`
+		RawParam       string `json:"raw_param,omitempty"`
+		Value          any    `json:"value,omitempty"`
+		PathUnresolved bool   `json:"path_unresolved,omitempty"`
+		Cause          string `json:"cause,omitempty"`
+	}{
+		Path:           e.Path,
+		Tag:            e.Tag,
+		Param:          e.Param,
+		Value:          e.Value,
+		PathUnresolved: e.pathUnresolved,
 	}
 	if e.RawParam != "" && e.RawParam != e.Param {
-		attrs = append(attrs, slog.String("raw_param", e.RawParam))
-	}
-	if e.Value != nil {
-		attrs = append(attrs, slog.Any("value", e.Value))
-	}
-	if e.pathUnresolved {
-		attrs = append(attrs, slog.Bool("path_unresolved", true))
+		out.RawParam = e.RawParam
 	}
 	if e.cause != nil {
-		attrs = append(attrs, slog.String("cause", e.cause.Error()))
+		out.Cause = e.cause.Error()
 	}
-	return slog.GroupValue(attrs...)
+	return json.Marshal(out)
 }
 
 // Unwrap returns the chain {sentinel, cause, ErrPathUnresolved?}. The
@@ -253,12 +261,16 @@ func (m *MultiError) Unwrap() []error {
 	return m.unwrapped
 }
 
-// LogValue implements slog.LogValuer so a MultiError can be passed straight
-// to a structured logger and yields a group of {count, errors}, where each
-// FieldError uses its own LogValue rendering.
-func (m *MultiError) LogValue() slog.Value {
-	return slog.GroupValue(
-		slog.Int("count", len(m.Errors)),
-		slog.Any("errors", m.Errors),
-	)
+// MarshalJSON mirrors LogValue's shape so encoding/json consumers see the
+// same {count, errors:[…]} envelope a structured logger does. Each child
+// FieldError serializes via its own MarshalJSON.
+func (m *MultiError) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Count  int           `json:"count"`
+		Errors []*FieldError `json:"errors"`
+	}{
+		Count:  len(m.Errors),
+		Errors: m.Errors,
+	})
 }
+
