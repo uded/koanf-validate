@@ -120,6 +120,24 @@ func TestMultiError_RenderShowsAllErrors(t *testing.T) {
 	}
 }
 
+// A *FieldError constructed directly by user code (e.g. inside a
+// Validate() method, before it goes through the library's flattening
+// pipeline) has its internal sentinel field unset. Unwrap MUST substitute
+// ErrInvariant so errors.Is still reaches a meaningful category — the
+// public Unwrap godoc promises this contract regardless of construction
+// path.
+func TestFieldError_UserConstructed_UnwrapHasInvariantSentinel(t *testing.T) {
+	t.Parallel()
+	fe := &koanfvalidate.FieldError{Path: "x", Tag: "custom"}
+	if !errors.Is(fe, koanfvalidate.ErrInvariant) {
+		t.Errorf("errors.Is(user-constructed FieldError, ErrInvariant) = false; expected true")
+	}
+	// Negative control — must not match an unrelated sentinel.
+	if errors.Is(fe, koanfvalidate.ErrRequired) {
+		t.Errorf("errors.Is(user-constructed FieldError, ErrRequired) = true; expected false")
+	}
+}
+
 // =============================================================================
 // Sentinel traversal via errors.Is on MultiError
 // =============================================================================

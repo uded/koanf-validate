@@ -75,7 +75,35 @@ jobs:
         uses: codecov/codecov-action@v6
         with:
           files: ./coverage.txt
-          fail_ci_if_error: false
+          # Fail loudly if the upload itself fails so a codecov outage
+          # cannot silently bypass the threshold gates declared in
+          # codecov.yml. The gates are the actual quality signal — losing
+          # the upload means losing the gate.
+          fail_ci_if_error: true
+
+  bench:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          # Run benchmarks under MSRV — the perf numbers downstream
+          # consumers actually see at the floor of the supported range.
+          go-version-file: go.mod
+      - name: Run benchmarks
+        # -count=6 amortises GC/runtime noise; -benchtime=2s gives each
+        # bench enough iterations for stable ns/op. The .txt extension
+        # makes the artifact directly consumable by `benchstat`.
+        run: go test -bench=. -benchmem -count=6 -benchtime=2s -run=^$ ./... | tee bench.txt
+      - name: Upload bench output
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ github.sha }}
+          path: bench.txt
+          retention-days: 90
 
   vuln:
     name: Vulnerability scan

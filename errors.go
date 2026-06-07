@@ -112,7 +112,11 @@ type FieldError struct {
 	Value any
 
 	// sentinel is the categorical sentinel error (ErrRequired, ErrOutOfRange,
-	// etc.) that errors.Is matches against. Always non-nil.
+	// etc.) that errors.Is matches against. The library always sets this
+	// before returning a FieldError; user-constructed values (e.g. a
+	// *FieldError built by a Validate() method) may leave it nil — Unwrap
+	// substitutes ErrInvariant on the way out so the errors.Is contract
+	// holds regardless of construction path.
 	sentinel error
 
 	// cause is the underlying validator.FieldError when this FieldError was
@@ -188,7 +192,11 @@ func (e *FieldError) MarshalJSON() ([]byte, error) {
 }
 
 // Unwrap returns the chain {sentinel, cause, ErrPathUnresolved?}. The
-// sentinel is always present; the cause is the underlying
+// sentinel is always present in the returned chain — a nil internal
+// sentinel (only possible for a *FieldError built directly by user code,
+// e.g. inside a Validate() method) is substituted with ErrInvariant so
+// errors.Is reaches a meaningful category match regardless of how the
+// FieldError was constructed. The cause is the underlying
 // validator.FieldError for tag rules or nil for invariant errors;
 // ErrPathUnresolved is appended only when the koanf path could not be
 // resolved (e.g. for dive, maps, slice elements). This lets callers do:
@@ -197,8 +205,12 @@ func (e *FieldError) MarshalJSON() ([]byte, error) {
 //	errors.As(err, &validator.ValidationErrors{})        // cause match
 //	errors.Is(err, koanfvalidate.ErrPathUnresolved)      // degraded path
 func (e *FieldError) Unwrap() []error {
+	sentinel := e.sentinel
+	if sentinel == nil {
+		sentinel = ErrInvariant
+	}
 	out := make([]error, 0, 3)
-	out = append(out, e.sentinel)
+	out = append(out, sentinel)
 	if e.cause != nil {
 		out = append(out, e.cause)
 	}
