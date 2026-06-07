@@ -323,6 +323,7 @@ Errors at well-modeled paths (the common case — plain struct fields and interm
 - **Tell you which koanf layer produced the value.** `koanf/v2` exposes no provider-of-origin API; after `Unmarshal` the layers are collapsed. The library validates the resulting struct.
 - **Normalize values before validation.** Lowercasing emails, trimming whitespace, etc. — run those yourself before calling `Struct`.
 - **Reinvent validator rules.** No new rule grammar, no new tag syntax. `koanf-validate` is a translation layer.
+- **Adapt to validation libraries other than `validator/v10`.** The walker and translator are coupled to validator/v10's `Namespace()`/`Param()`/`Tag()` error surface. Libraries with different error models — [gookit/validate](https://github.com/gookit/validate), [ozzo-validation](https://github.com/go-ozzo/ozzo-validation), [govalidator](https://github.com/asaskevich/govalidator) — would need a parallel adapter, not a shim, and the upstream concerns those libraries own (custom messages, scenes, i18n, filtering) collide with this library's path-translation mandate. Out of scope.
 
 ## License
 
